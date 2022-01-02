@@ -1,0 +1,13 @@
+{application, erl_csv,
+ [{description, "A simple library for dealing with CSV files"},
+  {vsn, git},
+  {registered, []},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+  {licenses, ["Apache 2.0"]},
+  {links, [{"GitHub", "https://github.com/NelsonVides/erl_csv"}]}
+ ]}.
