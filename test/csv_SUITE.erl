@@ -25,7 +25,9 @@ groups() ->
        quotes_and_newlines,
        escaped_quotes,
        utf8,
-       json
+       json,
+       stream_equals_full,
+       stream_with_new_lines
       ]
      }
     ].
@@ -76,3 +78,45 @@ json(Config) ->
     Encoded = <<"key,val\n1,\"{\"\"type\"\": \"\"Point\"\",\"\"coordinates\"\": [102.0, 0.5]}\"\n">>,
     % when
     run_test(which_group(Config), Encoded, Decoded).
+
+stream_equals_full(Config) ->
+    CsvFile = filename:join([?config(data_dir, Config), "csv_example.csv"]),
+    match_file(CsvFile).
+
+stream_with_new_lines(Config) ->
+    CsvFile = filename:join([?config(data_dir, Config), "short_new_lines.csv"]),
+    match_file(CsvFile).
+
+match_file(CsvFile) ->
+    {Worker, Ref} = spawn_monitor(fun() -> accumulate([]) end),
+    {ok, Stream} = erl_csv:decode_new_s(CsvFile),
+    Result = do_import(Stream, Worker, Ref),
+    {ok, Bin} = file:read_file(CsvFile),
+    {ok, Decoded} = erl_csv:decode(Bin),
+    ?assertMatch(Decoded, Result).
+
+do_import(stream_end, Worker, Ref) ->
+    collect(Worker, Ref);
+do_import(Stream, Worker, Ref) ->
+    {ok, Decoded, MoreStream} = erl_csv:decode_s(Stream),
+    Worker ! {csv, Decoded},
+    do_import(MoreStream, Worker, Ref).
+
+accumulate(Acc) ->
+    receive
+        stop ->
+            exit(lists:reverse(Acc));
+        {csv, []} ->
+            exit(lists:reverse(Acc));
+        {csv, Data} ->
+            accumulate(Data ++ Acc)
+    end.
+
+collect(Worker, Ref) ->
+    Worker ! stop,
+    receive
+        {'DOWN', Ref, process, Worker, Result} ->
+            Result
+    after 5000 ->
+              ct:fail("Message not received")
+    end.
