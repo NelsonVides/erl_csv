@@ -1,5 +1,4 @@
 -module(erl_csv_encoder).
--compile([export_all, nowarn_export_all]).
 
 -include("erl_csv.hrl").
 
@@ -37,6 +36,8 @@ get_values(Row, Headers) ->
 
 encode_cells(Row, Sep, Del) when is_map(Row) ->
     maps:map(fun(_H, Cell) -> encode_cell(Cell, Sep, Del) end, Row);
+encode_cells(Row, Sep, Del) when is_tuple(Row) ->
+    lists:map(fun(Cell) -> encode_cell(Cell, Sep, Del) end, tuple_to_list(Row));
 encode_cells(Row, Sep, Del) when is_list(Row) ->
     lists:map(fun(Cell) -> encode_cell(Cell, Sep, Del) end, Row).
 
@@ -57,7 +58,6 @@ encode_cell(Cell, Sep, Del) when is_binary(Cell) ->
         _ ->
             [$", re:replace(Cell, <<$">>, <<"\"\"">>, [global, unicode]), $"]
     end;
-
 encode_cell(Cell, _, _) when is_tuple(Cell) ->
     [$", io_lib:format("~p", [Cell]), $"];
 encode_cell(Cell, Sep, Del) when is_list(Cell) ->
