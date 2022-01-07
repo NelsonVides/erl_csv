@@ -3,6 +3,7 @@
 -include("erl_csv.hrl").
 
 -export([encode/1, encode/2, decode/1, decode/2]).
+-export([decode_new_s/1, decode_new_s/2, decode_s/1]).
 
 -type encode_opts() :: #{headers => boolean() | list(),
                          separator => <<_:8>>,
@@ -76,3 +77,18 @@ decode(Input) ->
     {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
 decode(Input, Opts) ->
     erl_csv_decoder:decode(Input, Opts).
+
+-spec decode_new_s(file:name_all()) ->
+    {ok, csv_stream()} | {error, term()}.
+decode_new_s(Input) ->
+    decode_new_s(Input, #{}).
+
+-spec decode_new_s(file:name_all(), decode_opts()) ->
+    {ok, csv_stream()} | {error, term()}.
+decode_new_s(Input, Opts) ->
+    erl_csv_decoder:decode_new_s(Input, Opts).
+
+-spec decode_s(csv_stream()) ->
+    {ok, iolist(), csv_stream()} | {error, term()}.
+decode_s(Input) ->
+    erl_csv_decoder:decode_s(Input).

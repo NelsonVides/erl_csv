@@ -2,7 +2,7 @@
 
 -include("erl_csv.hrl").
 
--export([decode/2]).
+-export([decode/2, decode_new_s/2, decode_s/1]).
 
 -record(csv_decoder, {
           line_break = ?DELIMITER :: <<_:8>> | <<_:16>>,
@@ -27,7 +27,45 @@ decode(Chunk, Opts) ->
     Match = re:run(Chunk, Regex, [global, {capture, all, index}]),
     process_match(Match, State, Chunk).
 
+-spec decode_new_s(file:name_all(), erl_csv:decode_opts()) ->
+    {ok, csv_stream()} | {error, term()}.
+decode_new_s(File, Opts) ->
+    case erl_csv_file_stream:read_file(File, Opts) of
+        #csv_stream{} = Stream ->
+            {ok, Stream};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+-spec decode_s(maybe_csv_stream()) ->
+    {ok, iolist(), csv_stream()} | {error, term()}.
+decode_s(stream_end) ->
+    {ok, [], stream_end};
+decode_s(#csv_stream{hd = Bin, opts = Opts} = Stream) ->
+    case decode(Bin, Opts) of
+        {ok, Decoded} ->
+            {ok, Decoded, Stream#csv_stream{hd = []}};
+        {has_trailer, Decoded, Trailer} ->
+            SavedStream = Stream#csv_stream{hd = Trailer},
+            get_more_stream(SavedStream);
+        {nomatch, _} ->
+            decode_s(get_more_stream(Stream));
+        {error, Reason} ->
+            {error, Reason}
+    end;
+decode_s({error, Reason}) ->
+    {error, Reason}.
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+-spec get_more_stream(csv_stream()) -> maybe_csv_stream().
+get_more_stream(Stream) ->
+    case erl_csv_file_stream:tl(Stream) of
+        {error, Reason} ->
+            {error, Reason};
+        NewStream ->
+            NewStream
+    end.
+
 -spec process_match(any(), csv_decoder(), iolist()) ->
     {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
 process_match(nomatch, _, NotMatched) ->
