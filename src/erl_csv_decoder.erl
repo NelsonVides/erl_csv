@@ -9,9 +9,10 @@
           separator  = ?SEPARATOR :: <<_:8>>,
           quotes     = ?QUOTES    :: <<_:8>>
          }).
+-type csv_decoder() :: #csv_decoder{}.
 
 -spec decode(iolist() | list(map()), erl_csv:decode_opts()) ->
-    {ok, iolist()} | {error, iolist()}.
+    {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
 decode(Chunk, Opts) ->
     Separator = maps:get(separator, Opts, ?SEPARATOR),
     Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
@@ -26,8 +27,11 @@ decode(Chunk, Opts) ->
     Match = re:run(Chunk, Regex, [global, {capture, all, index}]),
     process_match(Match, State, Chunk).
 
-process_match(nomatch, _, Chunk) ->
-    {error, Chunk};
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+-spec process_match(any(), csv_decoder(), iolist()) ->
+    {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
+process_match(nomatch, _, NotMatched) ->
+    {nomatch, NotMatched};
 process_match({match, Matches}, State, Chunk) ->
     case process_chunk(Matches, State, Chunk) of
         {Decoded, <<>>} -> {ok, Decoded};

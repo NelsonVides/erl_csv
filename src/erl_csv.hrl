@@ -7,4 +7,16 @@
 -define(CARRIAGE_RETURN, <<$\r>>).
 -define(DELIMITER, <<$\n>>).
 
+-record(csv_stream, {
+          hd = [] :: iolist(),
+          tl = fun() -> stream_end end :: erl_csv:csv_stream_fun(),
+          opts = #{} :: erl_csv:encode_opts()
+         }).
+
+-type csv_stream() :: #csv_stream{} | stream_end.
+-type maybe_csv_stream() :: csv_stream() | {error, term()}.
+-type csv_stream_fun() :: fun(() -> maybe_csv_stream()).
+
+-export_type([csv_stream/0]).
+
 -endif.

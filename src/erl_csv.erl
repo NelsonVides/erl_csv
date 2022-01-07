@@ -1,5 +1,7 @@
 -module(erl_csv).
 
+-include("erl_csv.hrl").
+
 -export([encode/1, encode/2, decode/1, decode/2]).
 
 -type encode_opts() :: #{headers => boolean() | list(),
@@ -65,10 +67,12 @@ encode(Input, Opts) ->
 % * `:replacement`   – The replacement string to use where lines have bad
 %     encoding. Defaults to `nil`, which disables replacement.
 
--spec decode(iolist() | list(map())) -> {ok, iolist()} | {error, iolist()}.
+-spec decode(iolist() | list(map())) ->
+    {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
 decode(Input) ->
     decode(Input, #{}).
 
--spec decode(iolist() | list(map()), decode_opts()) -> {ok, iolist()} | {error, iolist()}.
+-spec decode(iolist() | list(map()), decode_opts()) ->
+    {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
 decode(Input, Opts) ->
     erl_csv_decoder:decode(Input, Opts).
