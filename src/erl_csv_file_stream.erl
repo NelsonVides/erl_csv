@@ -1,3 +1,4 @@
+%% @private
 %%   Copyright 2022 Nelson Vides, All Rights Reserved
 %%   Copyright 2012 - 2014 Dmitry Kolesnikov, All Rights Reserved
 %%

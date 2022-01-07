@@ -1,3 +1,4 @@
+%% @private
 -module(erl_csv_decoder).
 
 -include("erl_csv.hrl").
@@ -11,8 +12,8 @@
          }).
 -type csv_decoder() :: #csv_decoder{}.
 -type matches() :: [{non_neg_integer(), non_neg_integer()}].
-% -type match() :: nomatch | {match, matches()}.
 
+% -type match() :: nomatch | {match, matches()}.
 % -spec decode(binary(), erl_csv:decode_opts()) ->
 %     {ok, binary()} | {has_trailer, iolist(), binary()} | {nomatch, binary()}.
 decode(Chunk, Opts) ->

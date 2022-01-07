@@ -1,3 +1,4 @@
+%% @private
 -module(erl_csv_encoder).
 
 -include("erl_csv.hrl").
