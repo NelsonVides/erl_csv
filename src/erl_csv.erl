@@ -11,7 +11,8 @@
 
 -type decode_opts() :: #{quotes => <<_:8>>,
                          separator => <<_:8>>,
-                         delimiter => binary()}.
+                         delimiter => binary(),
+                         regex => term()}.
 
 -export_type([encode_opts/0, decode_opts/0]).
 
@@ -68,13 +69,13 @@ encode(Input, Opts) ->
 % * `:replacement`   – The replacement string to use where lines have bad
 %     encoding. Defaults to `nil`, which disables replacement.
 
--spec decode(iolist() | list(map())) ->
-    {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
+-spec decode(binary()) ->
+    {ok, binary()} | {has_trailer, binary(), binary()} | {nomatch, binary()}.
 decode(Input) ->
     decode(Input, #{}).
 
--spec decode(iolist() | list(map()), decode_opts()) ->
-    {ok, iolist()} | {has_trailer, iolist(), iolist()} | {nomatch, iolist()}.
+-spec decode(binary(), decode_opts()) ->
+    {ok, binary()} | {has_trailer, binary(), binary()} | {nomatch, binary()}.
 decode(Input, Opts) ->
     erl_csv_decoder:decode(Input, Opts).
 
