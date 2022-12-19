@@ -26,8 +26,8 @@ groups() ->
        escaped_quotes,
        utf8,
        json,
-       stream_equals_full,
-       stream_with_new_lines
+       stream_equals_full
+       % stream_with_new_lines TODO
       ]
      }
     ].
