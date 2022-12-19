@@ -91,7 +91,7 @@ new(Head) ->
 new(Head, Fun) when is_function(Fun, 0) ->
     #csv_stream{hd = Head, tl = Fun}.
 
--spec read_file(file:name(), map()) -> maybe_csv_stream().
+-spec read_file(file:name_all(), map()) -> maybe_csv_stream().
 read_file(File, Opts) ->
     BufferSize = maps:get(iobuf, Opts, ?DEFAULT_BUFFER_SIZE),
     {ok, FD} = file:open(File, [raw, binary, read, {read_ahead, BufferSize}]),
