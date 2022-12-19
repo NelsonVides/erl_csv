@@ -97,9 +97,9 @@ process_chunk([], Chunk, Filtered, #csv_decoder{}, [], Acc, LenProcessed) ->
     Size = byte_size(Chunk),
     NotProcessed = Size - LenProcessed,
     NewChunk = binary:part(Chunk, Size, - NotProcessed),
-    case iolist_to_binary([NewChunk, Filtered]) of
-        <<>> -> {no_trailer, lists:reverse(Acc)};
-        Trailer -> {has_trailer, lists:reverse(Acc), Trailer}
+    case iolist_size(NewChunk) of
+        0 -> {no_trailer, lists:reverse(Acc)};
+        _ -> {has_trailer, lists:reverse(Acc), NewChunk}
     end;
 process_chunk([ [{Pos, Len} | _] | Matches], Chunk,
               Filtered, #csv_decoder{line_break = LineBreak, separator = SepBy} = State, LineAcc, Acc, _) ->
