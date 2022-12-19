@@ -8,7 +8,7 @@
 -define(DELIMITER, <<$\n>>).
 
 -record(csv_stream, {
-          hd = <<>> :: binary(),
+          hd = <<>> :: iodata(),
           tl = fun() -> stream_end end :: erl_csv:csv_stream_fun(),
           opts = #{} :: erl_csv:decode_opts()
          }).

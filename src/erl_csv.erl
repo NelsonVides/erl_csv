@@ -60,13 +60,13 @@ encode(Input, Opts) ->
 %     When set to anything but `false', the resulting rows in the matrix will
 %     be maps instead of lists.
 
--spec decode(binary()) ->
-    {ok, binary()} | {has_trailer, binary(), binary()} | {nomatch, binary()}.
+-spec decode(iodata()) ->
+    {ok, iodata()} | {has_trailer, iodata(), iodata()} | {nomatch, iodata()} | {error, term()}.
 decode(Input) ->
     decode(Input, #{}).
 
--spec decode(binary(), decode_opts()) ->
-    {ok, binary()} | {has_trailer, binary(), binary()} | {nomatch, binary()}.
+-spec decode(iodata(), decode_opts()) ->
+    {ok, iodata()} | {has_trailer, iodata(), iodata()} | {nomatch, iodata()} | {error, term()}.
 decode(Input, Opts) ->
     erl_csv_decoder:decode(Input, Opts).
 

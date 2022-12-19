@@ -23,7 +23,7 @@
 
 -define(DEFAULT_BUFFER_SIZE, 64 * 1024).
 
--spec hd(csv_stream()) -> binary().
+-spec hd(csv_stream()) -> iodata().
 hd(#csv_stream{hd = Head}) ->
     Head;
 hd(stream_end) ->
@@ -87,7 +87,7 @@ new() ->
 new(Head) ->
     new(Head, fun new/0).
 
--spec new(binary(), csv_stream_fun()) -> csv_stream().
+-spec new(iodata(), csv_stream_fun()) -> csv_stream().
 new(Head, Fun) when is_function(Fun, 0) ->
     #csv_stream{hd = Head, tl = Fun}.
 

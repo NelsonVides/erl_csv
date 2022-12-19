@@ -13,9 +13,8 @@
 -type csv_decoder() :: #csv_decoder{}.
 -type matches() :: [{non_neg_integer(), non_neg_integer()}].
 
-% -type match() :: nomatch | {match, matches()}.
-% -spec decode(binary(), erl_csv:decode_opts()) ->
-%     {ok, binary()} | {has_trailer, iolist(), binary()} | {nomatch, binary()}.
+-spec decode(iodata(), erl_csv:decode_opts()) ->
+    {ok, iodata()} | {has_trailer, iodata(), iodata()} | {nomatch, iodata()} | {error, term()}.
 decode(Chunk, Opts) ->
     Separator = maps:get(separator, Opts, ?SEPARATOR),
     Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
@@ -37,7 +36,7 @@ decode_new_s(File, Opts) ->
     end.
 
 -spec decode_s(maybe_csv_stream()) ->
-    {ok, iolist(), csv_stream()} | {error, term()}.
+    {ok, iodata(), csv_stream()} | {error, term()}.
 decode_s(stream_end) ->
     {ok, [], stream_end};
 decode_s(#csv_stream{hd = Bin, opts = Opts} = Stream) ->
@@ -46,10 +45,15 @@ decode_s(#csv_stream{hd = Bin, opts = Opts} = Stream) ->
             {ok, Decoded, Stream#csv_stream{hd = <<>>}};
         {has_trailer, Decoded, Trailer} ->
             SavedStream = Stream#csv_stream{hd = Trailer},
-            {ok, Decoded, get_more_stream(SavedStream)};
+            case get_more_stream(SavedStream) of
+                {error, Reason} -> {error, Reason};
+                MoreStream -> {ok, Decoded, MoreStream}
+            end;
         {nomatch, NotMatched} ->
-            SavedStream = Stream#csv_stream{hd = iolist_to_binary([Bin, NotMatched])},
-            decode_s(get_more_stream(SavedStream))
+            SavedStream = Stream#csv_stream{hd = [Bin, NotMatched]},
+            decode_s(get_more_stream(SavedStream));
+        {error, Reason} ->
+            {error, Reason}
     end;
 decode_s({error, Reason}) ->
     {error, Reason}.
@@ -64,33 +68,38 @@ get_more_stream(Stream) ->
             NewStream
     end.
 
-% -spec process_match({error, term()} | match(), csv_decoder(), binary()) ->
-%     {ok, binary()} | {has_trailer, iolist(), binary()} | {nomatch, binary()} | {error, term()}.
+-spec process_match(
+        {match, matches()} | {error, term()} | match | nomatch, csv_decoder(), iodata()) ->
+    {ok, iodata()} | {has_trailer, iodata(), iodata()} | {nomatch, iodata()} | {error, term()}.
+process_match({match, [ [{_, _} | _] | _] = Matches}, State, Chunk) ->
+    case pre_process_chunk(Matches, State, iolist_to_binary(Chunk)) of
+        {no_trailer, Decoded} ->
+            {ok, Decoded};
+        {has_trailer, Decoded, Trailer} ->
+            {has_trailer, Decoded, Trailer}
+    end;
 process_match({error, Reason}, _, _) ->
     {error, Reason};
-process_match(nomatch, _, NotMatched) ->
-    {nomatch, NotMatched};
-process_match({match, Matches}, State, Chunk) ->
-    case pre_process_chunk(Matches, State, Chunk) of
-        {Decoded, no_trailer} -> {ok, Decoded};
-        {Decoded, Trailer} when is_binary(Trailer) -> {has_trailer, Decoded, Trailer}
-    end.
+process_match(_, _, NotMatched) ->
+    {nomatch, NotMatched}.
 
 -spec pre_process_chunk([matches()], csv_decoder(), binary()) ->
-    {iolist(), no_trailer | binary()}.
+    {no_trailer, Decoded :: iodata()} |
+    {has_trailer, Decoded :: iodata(), Trailer :: iodata()}.
 pre_process_chunk(Matches, #csv_decoder{line_break = LineBreak} = State, Chunk) ->
     {Matches2, Filtered} = filter_incomplete_lines(Matches, Chunk, LineBreak),
     process_chunk(Matches2, Chunk, Filtered, State, [], [], 0).
 
--spec process_chunk([matches()], binary(), list(), csv_decoder(), list(), list(), non_neg_integer()) ->
-    {iolist(), no_trailer | binary()}.
+-spec process_chunk([matches()], binary(), [matches()], csv_decoder(), list(), list(), non_neg_integer()) ->
+    {no_trailer, Match :: iodata()} |
+    {has_trailer, Match :: iodata(), Trailer :: iodata()}.
 process_chunk([], Chunk, Filtered, #csv_decoder{}, [], Acc, LenProcessed) ->
     Size = byte_size(Chunk),
     NotProcessed = Size - LenProcessed,
     NewChunk = binary:part(Chunk, Size, - NotProcessed),
     case iolist_to_binary([NewChunk, Filtered]) of
-        <<>> -> {lists:reverse(Acc), no_trailer};
-        Trailer -> {lists:reverse(Acc), Trailer}
+        <<>> -> {no_trailer, lists:reverse(Acc)};
+        Trailer -> {has_trailer, lists:reverse(Acc), Trailer}
     end;
 process_chunk([ [{Pos, Len} | _] | Matches], Chunk,
               Filtered, #csv_decoder{line_break = LineBreak, separator = SepBy} = State, LineAcc, Acc, _) ->
@@ -103,7 +112,7 @@ process_chunk([ [{Pos, Len} | _] | Matches], Chunk,
     end.
 
 -spec filter_incomplete_lines([matches()], binary(), <<_:8>>) ->
-    {iolist(), iolist()}.
+    {[matches()], [matches()]}.
 filter_incomplete_lines(Matches, Chunk, LineBreak) ->
     Fun = fun(Match) ->
                   PosLen = lists:last(Match),
