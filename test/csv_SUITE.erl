@@ -26,6 +26,7 @@ groups() ->
        escaped_quotes,
        utf8,
        json,
+       incomplete_input,
        stream_equals_full
        % stream_with_new_lines TODO
       ]
@@ -43,6 +44,11 @@ which_group(Config) ->
     GroupProps = ?config(tc_group_properties, Config),
     {name, Group} = lists:keyfind(name, 1, GroupProps),
     Group.
+
+incomplete_input(_) ->
+    Decoded = [[<<"1">>, <<"2">>]],
+    Result = erl_csv:decode(<<"1,2\n3,4">>),
+    ?assertEqual({has_trailer, Decoded, <<"3,4">>}, Result).
 
 quotes_and_newlines(Config) ->
     % given
