@@ -87,13 +87,13 @@ process_match(_, _, NotMatched) ->
     {no_trailer, Decoded :: iodata()} |
     {has_trailer, Decoded :: iodata(), Trailer :: iodata()}.
 pre_process_chunk(Matches, #csv_decoder{line_break = LineBreak} = State, Chunk) ->
-    {Matches2, Filtered} = filter_incomplete_lines(Matches, Chunk, LineBreak),
-    process_chunk(Matches2, Chunk, Filtered, State, [], [], 0).
+    {Matches2, _Filtered} = filter_incomplete_lines(Matches, Chunk, LineBreak),
+    process_chunk(Matches2, Chunk, State, [], [], 0).
 
--spec process_chunk([matches()], binary(), [matches()], csv_decoder(), list(), list(), non_neg_integer()) ->
+-spec process_chunk([matches()], binary(), csv_decoder(), list(), list(), non_neg_integer()) ->
     {no_trailer, Match :: iodata()} |
     {has_trailer, Match :: iodata(), Trailer :: iodata()}.
-process_chunk([], Chunk, Filtered, #csv_decoder{}, [], Acc, LenProcessed) ->
+process_chunk([], Chunk, #csv_decoder{}, [], Acc, LenProcessed) ->
     Size = byte_size(Chunk),
     NotProcessed = Size - LenProcessed,
     NewChunk = binary:part(Chunk, Size, - NotProcessed),
@@ -102,13 +102,13 @@ process_chunk([], Chunk, Filtered, #csv_decoder{}, [], Acc, LenProcessed) ->
         _ -> {has_trailer, lists:reverse(Acc), NewChunk}
     end;
 process_chunk([ [{Pos, Len} | _] | Matches], Chunk,
-              Filtered, #csv_decoder{line_break = LineBreak, separator = SepBy} = State, LineAcc, Acc, _) ->
+              #csv_decoder{line_break = LineBreak, separator = SepBy} = State, LineAcc, Acc, _) ->
     Csv = binary:part(Chunk, Pos, Len - 1),
     Csv2 = format_term(Csv, State),
     case binary:part(Chunk, Pos + Len, - 1) of
         LineBreak -> NewLine = lists:reverse([Csv2 | LineAcc]),
-                     process_chunk(Matches, Chunk, Filtered, State, [], [NewLine | Acc], Pos + Len);
-        SepBy -> process_chunk(Matches, Chunk, Filtered, State, [Csv2 | LineAcc], Acc, Pos + Len)
+                     process_chunk(Matches, Chunk, State, [], [NewLine | Acc], Pos + Len);
+        SepBy -> process_chunk(Matches, Chunk, State, [Csv2 | LineAcc], Acc, Pos + Len)
     end.
 
 -spec filter_incomplete_lines([matches()], binary(), <<_:8>>) ->
