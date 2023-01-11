@@ -16,6 +16,6 @@
 -type csv_stream() :: #csv_stream{} | stream_end.
 -type maybe_csv_stream() :: csv_stream() | {error, term()}.
 -type csv_stream_fun() :: fun(() -> maybe_csv_stream()).
--export_type([csv_stream/0]).
+-export_type([csv_stream/0, csv_stream_fun/0]).
 
 -endif.
