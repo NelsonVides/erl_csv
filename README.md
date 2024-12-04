@@ -1,5 +1,6 @@
 [![Hex](http://img.shields.io/hexpm/v/erl_csv.svg)](https://hex.pm/packages/erl_csv)
 [![Hex Docs](https://img.shields.io/badge/erl_csv.svg)](https://hexdocs.pm/erl_csv/)
+[![Actions Status](https://github.com/NelsonVides/erl_csv/actions/workflows/erlang.yml/badge.svg)](https://github.com/NelsonVides/erl_csv/actions/workflows/erlang.yml)
 
 `erl_csv` is a pure Erlang library to encode and decode csv files.
 
