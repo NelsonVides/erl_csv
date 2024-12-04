@@ -23,13 +23,13 @@
 
 -define(DEFAULT_BUFFER_SIZE, 64 * 1024).
 
--spec hd(csv_stream()) -> iodata().
+-spec hd(erl_csv:csv_stream()) -> iodata().
 hd(#csv_stream{hd = Head}) ->
     Head;
 hd(stream_end) ->
     <<>>.
 
--spec tl(csv_stream()) -> maybe_csv_stream().
+-spec tl(erl_csv:csv_stream()) -> erl_csv:maybe_csv_stream().
 tl(#csv_stream{hd = <<>>, tl = Tail}) ->
     Tail();
 tl(#csv_stream{hd = Head, tl = Tail}) ->
@@ -44,7 +44,7 @@ tl(#csv_stream{hd = Head, tl = Tail}) ->
 tl(stream_end) ->
     stream_end.
 
--spec foreach(fun((term()) -> term()), maybe_csv_stream()) -> stream_end | {error, term()}.
+-spec foreach(fun((term()) -> term()), erl_csv:maybe_csv_stream()) -> stream_end | {error, term()}.
 foreach(_Fun, stream_end) ->
     stream_end;
 foreach(Fun, #csv_stream{hd = Head} = Stream) ->
@@ -53,7 +53,7 @@ foreach(Fun, #csv_stream{hd = Head} = Stream) ->
 foreach(_, {error, Reason}) ->
     {error, Reason}.
 
--spec map(fun((T1) -> T2), maybe_csv_stream()) ->
+-spec map(fun((T1) -> T2), erl_csv:maybe_csv_stream()) ->
     [T2 | {error, term()}] when
       T1 :: term(),
       T2 :: term().
@@ -64,13 +64,13 @@ map(Fun, #csv_stream{hd = Head} = Stream) ->
 map(_, {error, Reason}) ->
     [{error, Reason}].
 
--spec list(csv_stream()) -> list().
+-spec list(erl_csv:csv_stream()) -> list().
 list(#csv_stream{hd = Head} = Stream) ->
     [ Head | list(tl(Stream))];
 list(_) ->
     [].
 
--spec list(integer(), csv_stream()) -> list().
+-spec list(integer(), erl_csv:csv_stream()) -> list().
 list(N, #csv_stream{hd = Head} = Stream) when N > 0 ->
     [ Head | list(N - 1, tl(Stream))];
 list(_, _) ->
@@ -79,25 +79,25 @@ list(_, _) ->
 %% create file csv_stream
 %%  Options:
 %%    * {iobuf, integer()} - size of i/o buffer
--spec new() -> csv_stream().
+-spec new() -> erl_csv:csv_stream().
 new() ->
     stream_end.
 
--spec new(binary()) -> csv_stream().
+-spec new(binary()) -> erl_csv:csv_stream().
 new(Head) ->
     new(Head, fun new/0).
 
--spec new(iodata(), csv_stream_fun()) -> csv_stream().
+-spec new(iodata(), erl_csv:csv_stream_fun()) -> erl_csv:csv_stream().
 new(Head, Fun) when is_function(Fun, 0) ->
     #csv_stream{hd = Head, tl = Fun}.
 
--spec read_file(file:name_all(), map()) -> maybe_csv_stream().
+-spec read_file(file:name_all(), map()) -> erl_csv:maybe_csv_stream().
 read_file(File, Opts) ->
     BufferSize = maps:get(iobuf, Opts, ?DEFAULT_BUFFER_SIZE),
-    {ok, FD} = file:open(File, [raw, binary, read, {read_ahead, BufferSize}]),
+    {ok, FD} = file:open(File, [raw, binary, read, {encoding, utf8}, {read_ahead, BufferSize}]),
     istream(FD).
 
--spec istream(term()) -> maybe_csv_stream().
+-spec istream(term()) -> erl_csv:maybe_csv_stream().
 istream(FD) when is_tuple(FD), erlang:element(1, FD) =:= file_descriptor ->
     case file:read_line(FD) of
         {ok, Chunk} ->

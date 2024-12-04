@@ -25,7 +25,7 @@ decode(Chunk, Opts) ->
     process_match(Match, State, Chunk).
 
 -spec decode_new_s(file:name_all(), erl_csv:decode_opts()) ->
-    {ok, csv_stream()} | {error, term()}.
+    {ok, erl_csv:csv_stream()} | {error, term()}.
 decode_new_s(File, Opts) ->
     Opts1 = Opts#{regex => build_regex(Opts)},
     case erl_csv_file_stream:read_file(File, Opts1) of
@@ -35,8 +35,8 @@ decode_new_s(File, Opts) ->
             {error, Reason}
     end.
 
--spec decode_s(maybe_csv_stream()) ->
-    {ok, iodata(), csv_stream()} | {error, term()}.
+-spec decode_s(erl_csv:maybe_csv_stream()) ->
+    {ok, iodata(), erl_csv:csv_stream()} | {error, term()}.
 decode_s(stream_end) ->
     {ok, [], stream_end};
 decode_s(#csv_stream{hd = Bin, opts = Opts} = Stream) ->
@@ -59,7 +59,7 @@ decode_s({error, Reason}) ->
     {error, Reason}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
--spec get_more_stream(csv_stream()) -> maybe_csv_stream().
+-spec get_more_stream(erl_csv:csv_stream()) -> erl_csv:maybe_csv_stream().
 get_more_stream(Stream) ->
     case erl_csv_file_stream:tl(Stream) of
         {error, Reason} ->

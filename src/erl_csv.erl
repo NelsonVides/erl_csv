@@ -1,5 +1,7 @@
 -module(erl_csv).
 
+-include("erl_csv.hrl").
+
 -export([encode/1, encode/2, decode/1, decode/2]).
 -export([decode_new_s/1, decode_new_s/2, decode_s/1]).
 
@@ -12,6 +14,11 @@
                          delimiter => binary(),
                          regex => term()}.
 
+-type csv_stream() :: #csv_stream{} | stream_end.
+-type maybe_csv_stream() :: csv_stream() | {error, term()}.
+-type csv_stream_fun() :: fun(() -> maybe_csv_stream()).
+
+-export_type([csv_stream/0, maybe_csv_stream/0, csv_stream_fun/0]).
 -export_type([encode_opts/0, decode_opts/0]).
 
 %% @see encode/2
@@ -68,16 +75,16 @@ decode(Input, Opts) ->
     erl_csv_decoder:decode(Input, Opts).
 
 -spec decode_new_s(file:name_all()) ->
-    {ok, erl_csv_decoder:csv_stream()} | {error, term()}.
+    {ok, csv_stream()} | {error, term()}.
 decode_new_s(Input) ->
     decode_new_s(Input, #{}).
 
 -spec decode_new_s(file:name_all(), decode_opts()) ->
-    {ok, erl_csv_decoder:csv_stream()} | {error, term()}.
+    {ok, csv_stream()} | {error, term()}.
 decode_new_s(Input, Opts) ->
     erl_csv_decoder:decode_new_s(Input, Opts).
 
--spec decode_s(erl_csv_decoder:csv_stream()) ->
-    {ok, iolist(), erl_csv_decoder:csv_stream()} | {error, term()}.
+-spec decode_s(csv_stream()) ->
+    {ok, iolist(), csv_stream()} | {error, term()}.
 decode_s(Input) ->
     erl_csv_decoder:decode_s(Input).
