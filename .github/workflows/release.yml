@@ -23,7 +23,7 @@ jobs:
       - name: Publish package and docs to Hex
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-        run: rebar3 hex publish --yes
+        run: rebar3 hex publish -r hexpm --yes
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
