@@ -1,5 +1,5 @@
-%% @private
 -module(erl_csv_encoder).
+-moduledoc false.
 
 -include("erl_csv.hrl").
 

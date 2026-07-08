@@ -1,4 +1,3 @@
-%% @private
 %%   Copyright 2022 Nelson Vides, All Rights Reserved
 %%   Copyright 2012 - 2014 Dmitry Kolesnikov, All Rights Reserved
 %%
@@ -14,6 +13,7 @@
 %%   See the License for the specific language governing permissions and
 %%   limitations under the License.
 -module(erl_csv_file_stream).
+-moduledoc false.
 -compile({no_auto_import, [hd/1, tl/1]}).
 
 -include("erl_csv.hrl").
