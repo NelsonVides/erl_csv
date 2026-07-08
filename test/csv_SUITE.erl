@@ -30,7 +30,8 @@ groups() ->
         ]},
         {options, [parallel], [
             custom_quotes,
-            crlf_delimiter
+            crlf_delimiter,
+            utf8_roundtrip
         ]}
     ].
 
@@ -70,6 +71,15 @@ crlf_delimiter(_Config) ->
     Encoded = unicode:characters_to_binary(erl_csv:encode(Rows, Opts)),
     ?assertEqual(<<"a,b\r\nc,d\r\n">>, Encoded),
     ?assertEqual({ok, Rows}, erl_csv:decode(Encoded, Opts)).
+
+utf8_roundtrip(_Config) ->
+    % A multi-byte field (é = 233, ☃ = 9731) that also contains a separator
+    % must be quoted on encode and read back byte-for-byte on decode.
+    Field = <<"caf", 233/utf8, ", ", 9731/utf8, " snow">>,
+    Rows = [[Field, <<"plain">>]],
+    Encoded = unicode:characters_to_binary(erl_csv:encode(Rows)),
+    ?assertEqual(<<"\"caf", 233/utf8, ", ", 9731/utf8, " snow\",plain\n">>, Encoded),
+    ?assertEqual({ok, Rows}, erl_csv:decode(Encoded)).
 
 quotes_and_newlines(Config) ->
     % given

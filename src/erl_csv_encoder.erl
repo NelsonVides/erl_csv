@@ -11,24 +11,39 @@ encode([], _Opts) ->
 encode([First | _] = Input, Opts) ->
     Separator = maps:get(separator, Opts, ?SEPARATOR),
     Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
+    %% Compile the set of characters that force a field to be quoted once per
+    %% call instead of once per cell (which is what re:run/3 used to do).
+    Reserved = reserved_pattern(Separator, Delimiter),
     case maps:get(headers, Opts, false) of
         false ->
-            lists:map(fun(Row) -> encode_row(Row, Separator, Delimiter, false) end, Input);
+            lists:map(
+                fun(Row) -> encode_row(Row, Separator, Delimiter, Reserved, false) end, Input
+            );
         true ->
             [
-                encode_row(maps:keys(First), Separator, Delimiter, false)
-                | lists:map(fun(Row) -> encode_row(Row, Separator, Delimiter, true) end, Input)
+                encode_row(maps:keys(First), Separator, Delimiter, Reserved, false)
+                | lists:map(
+                    fun(Row) -> encode_row(Row, Separator, Delimiter, Reserved, true) end, Input
+                )
             ];
         Headers when is_list(Headers) ->
-            lists:map(fun(Row) -> encode_row(Row, Separator, Delimiter, Headers) end, Input)
+            lists:map(
+                fun(Row) -> encode_row(Row, Separator, Delimiter, Reserved, Headers) end, Input
+            )
     end.
 
-encode_row(Row, Separator, Delimiter, false) ->
-    EncodedCells = encode_cells(Row, Separator, Delimiter),
+-spec reserved_pattern(binary(), binary()) -> binary:cp().
+reserved_pattern(Separator, Delimiter) ->
+    binary:compile_pattern(
+        lists:usort([Separator, Delimiter, ?CARRIAGE_RETURN, ?NEWLINE, ?QUOTES])
+    ).
+
+encode_row(Row, Separator, Delimiter, Reserved, false) ->
+    EncodedCells = encode_cells(Row, Reserved),
     Encoded = intersperse_rev(Separator, EncodedCells),
     lists:reverse([Delimiter | Encoded]);
-encode_row(Row, Separator, Delimiter, Headers) ->
-    EncodedCells = encode_cells(get_values(Row, Headers), Separator, Delimiter),
+encode_row(Row, Separator, Delimiter, Reserved, Headers) ->
+    EncodedCells = encode_cells(get_values(Row, Headers), Reserved),
     Encoded = intersperse_rev(Separator, EncodedCells),
     lists:reverse([Delimiter | Encoded]).
 
@@ -37,12 +52,10 @@ get_values(Row, true) ->
 get_values(Row, Headers) ->
     lists:map(fun(H) -> maps:get(H, Row) end, Headers).
 
-encode_cells(Row, Sep, Del) when is_map(Row) ->
-    maps:map(fun(_H, Cell) -> encode_cell(Cell, Sep, Del) end, Row);
-encode_cells(Row, Sep, Del) when is_tuple(Row) ->
-    lists:map(fun(Cell) -> encode_cell(Cell, Sep, Del) end, tuple_to_list(Row));
-encode_cells(Row, Sep, Del) when is_list(Row) ->
-    lists:map(fun(Cell) -> encode_cell(Cell, Sep, Del) end, Row).
+encode_cells(Row, Reserved) when is_tuple(Row) ->
+    lists:map(fun(Cell) -> encode_cell(Cell, Reserved) end, tuple_to_list(Row));
+encode_cells(Row, Reserved) when is_list(Row) ->
+    lists:map(fun(Cell) -> encode_cell(Cell, Reserved) end, Row).
 
 intersperse_rev(Sep, Input) ->
     intersperse_rev(Sep, Input, []).
@@ -54,24 +67,26 @@ intersperse_rev(Sep, [In], Acc) ->
 intersperse_rev(Sep, [In | Rest], Acc) ->
     intersperse_rev(Sep, Rest, [Sep, In | Acc]).
 
-encode_cell(Cell, Sep, Del) when is_binary(Cell) ->
-    case
-        re:run(Cell, ["[", Sep, Del, ?CARRIAGE_RETURN, ?NEWLINE, ?QUOTES, "]"], [global, unicode])
-    of
+encode_cell(Cell, Reserved) when is_binary(Cell) ->
+    case binary:match(Cell, Reserved) of
         nomatch ->
             Cell;
         _ ->
-            [$", re:replace(Cell, <<$">>, <<"\"\"">>, [global, unicode]), $"]
+            [
+                ?QUOTES,
+                binary:replace(Cell, ?QUOTES, <<?QUOTES/binary, ?QUOTES/binary>>, [global]),
+                ?QUOTES
+            ]
     end;
-encode_cell(Cell, _, _) when is_tuple(Cell) ->
-    [$", io_lib:format("~p", [Cell]), $"];
-encode_cell(Cell, Sep, Del) when is_list(Cell) ->
-    encode_cell(unicode:characters_to_binary(Cell), Sep, Del);
-encode_cell(Cell, _, _) when is_integer(Cell) ->
-    integer_to_list(Cell);
-encode_cell(Cell, _, _) when is_float(Cell) ->
+encode_cell(Cell, _Reserved) when is_tuple(Cell) ->
+    [?QUOTES, io_lib:format("~p", [Cell]), ?QUOTES];
+encode_cell(Cell, Reserved) when is_list(Cell) ->
+    encode_cell(unicode:characters_to_binary(Cell), Reserved);
+encode_cell(Cell, _Reserved) when is_integer(Cell) ->
+    integer_to_binary(Cell);
+encode_cell(Cell, _Reserved) when is_float(Cell) ->
     io_lib:format("~f", [Cell]);
-encode_cell(Cell, _, _) when is_atom(Cell) ->
+encode_cell(Cell, _Reserved) when is_atom(Cell) ->
     io_lib:write_atom(Cell);
-encode_cell(Cell, _, _) ->
+encode_cell(Cell, _Reserved) ->
     io_lib:format("\"~p\"", [Cell]).
