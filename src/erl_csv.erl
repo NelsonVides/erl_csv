@@ -25,8 +25,7 @@ verbatim on both the encoding and the decoding path.
 -type decode_opts() :: #{
     quotes => <<_:8>>,
     separator => <<_:8>>,
-    delimiter => binary(),
-    regex => term()
+    delimiter => binary()
 }.
 
 -type csv_stream() :: #csv_stream{} | stream_end.
