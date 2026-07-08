@@ -15,15 +15,19 @@ verbatim on both the encoding and the decoding path.
 -export([decode_new_s/1, decode_new_s/2, decode_s/1]).
 
 -doc "Options accepted by `encode/2`.".
--type encode_opts() :: #{headers => boolean() | list(),
-                         separator => <<_:8>>,
-                         delimiter => binary()}.
+-type encode_opts() :: #{
+    headers => boolean() | list(),
+    separator => <<_:8>>,
+    delimiter => binary()
+}.
 
 -doc "Options accepted by `decode/2` and `decode_new_s/2`.".
--type decode_opts() :: #{quotes => <<_:8>>,
-                         separator => <<_:8>>,
-                         delimiter => binary(),
-                         regex => term()}.
+-type decode_opts() :: #{
+    quotes => <<_:8>>,
+    separator => <<_:8>>,
+    delimiter => binary(),
+    regex => term()
+}.
 
 -type csv_stream() :: #csv_stream{} | stream_end.
 -type maybe_csv_stream() :: csv_stream() | {error, term()}.
@@ -32,7 +36,7 @@ verbatim on both the encoding and the decoding path.
 -export_type([csv_stream/0, maybe_csv_stream/0, csv_stream_fun/0]).
 -export_type([encode_opts/0, decode_opts/0]).
 
--doc #{equiv => encode/2}.
+-doc #{equiv => encode(Input, #{})}.
 -spec encode(iolist() | list(map())) -> iolist().
 encode(Input) ->
     encode(Input, #{}).
@@ -57,7 +61,7 @@ file or other IO.
 encode(Input, Opts) ->
     erl_csv_encoder:encode(Input, Opts).
 
--doc #{equiv => decode/2}.
+-doc #{equiv => decode(Input, #{})}.
 -spec decode(iodata()) ->
     {ok, iodata()} | {has_trailer, iodata(), iodata()} | {nomatch, iodata()} | {error, term()}.
 decode(Input) ->
@@ -89,7 +93,7 @@ sequences if you use it directly. When the chunk ends in the middle of a line,
 decode(Input, Opts) ->
     erl_csv_decoder:decode(Input, Opts).
 
--doc #{equiv => decode_new_s/2}.
+-doc #{equiv => decode_new_s(Input, #{})}.
 -spec decode_new_s(file:name_all()) ->
     {ok, csv_stream()} | {error, term()}.
 decode_new_s(Input) ->

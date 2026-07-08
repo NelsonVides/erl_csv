@@ -35,6 +35,4 @@ jobs:
             _build
           key: ${{ runner.os }}-otp-${{ steps.setup-beam.outputs.otp-version }}-rebar3-${{ steps.setup-beam.outputs.rebar3-version }}-${{ hashFiles('rebar.lock', 'rebar.config') }}
       - run: rebar3 compile
-      - run: rebar3 xref
-      - run: rebar3 dialyzer
-      - run: rebar3 ct
+      - run: rebar3 check

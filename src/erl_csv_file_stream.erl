@@ -54,25 +54,26 @@ foreach(_, {error, Reason}) ->
     {error, Reason}.
 
 -spec map(fun((T1) -> T2), erl_csv:maybe_csv_stream()) ->
-    [T2 | {error, term()}] when
-      T1 :: term(),
-      T2 :: term().
+    [T2 | {error, term()}]
+when
+    T1 :: term(),
+    T2 :: term().
 map(Fun, stream_end) when is_function(Fun, 1) ->
     [];
 map(Fun, #csv_stream{hd = Head} = Stream) ->
-    [ Fun(Head) | map(Fun, tl(Stream)) ];
+    [Fun(Head) | map(Fun, tl(Stream))];
 map(_, {error, Reason}) ->
     [{error, Reason}].
 
 -spec list(erl_csv:csv_stream()) -> list().
 list(#csv_stream{hd = Head} = Stream) ->
-    [ Head | list(tl(Stream))];
+    [Head | list(tl(Stream))];
 list(_) ->
     [].
 
 -spec list(integer(), erl_csv:csv_stream()) -> list().
 list(N, #csv_stream{hd = Head} = Stream) when N > 0 ->
-    [ Head | list(N - 1, tl(Stream))];
+    [Head | list(N - 1, tl(Stream))];
 list(_, _) ->
     [].
 
@@ -102,27 +103,10 @@ istream(FD) when is_tuple(FD), erlang:element(1, FD) =:= file_descriptor ->
     case file:read_line(FD) of
         {ok, Chunk} ->
             new(Chunk, fun() -> istream(FD) end);
-        eof  ->
+        eof ->
             file:close(FD),
             new();
         {error, Reason} ->
             file:close(FD),
             {error, Reason}
     end.
-
-% -spec write_file(file:name(), list(), csv_stream()) -> ok | {error, any()}.
-% write_file(File, Opts, Stream) ->
-%     Chunk = proplists:get_value(iobuf, Opts, ?DEFAULT_BUFFER_SIZE),
-%     {ok, FD} = file:open(File, [raw, binary, append, {delayed_write, Chunk, 5000}]),
-%     ostream(FD, Stream).
-
-% ostream(FD, #csv_stream{} = Stream) when is_tuple(FD), erlang:element(1, FD) =:= file_descriptor ->
-%     case file:write(FD, hd(Stream)) of
-%         ok ->
-%             ostream(FD, tl(Stream));
-%         Error ->
-%             file:close(FD),
-%             Error
-%     end;
-% ostream(FD, {}) when is_tuple(FD), erlang:element(1, FD) =:= file_descriptor ->
-%     file:close(FD).
