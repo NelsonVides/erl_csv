@@ -7,7 +7,8 @@
 all() ->
     [
         {group, encode},
-        {group, decode}
+        {group, decode},
+        {group, options}
     ].
 
 groups() ->
@@ -26,6 +27,10 @@ groups() ->
             incomplete_input,
             stream_equals_full
             % stream_with_new_lines TODO
+        ]},
+        {options, [parallel], [
+            custom_quotes,
+            crlf_delimiter
         ]}
     ].
 
@@ -45,6 +50,26 @@ incomplete_input(_) ->
     Decoded = [[<<"1">>, <<"2">>]],
     Result = erl_csv:decode(<<"1,2\n3,4">>),
     ?assertEqual({has_trailer, Decoded, <<"3,4">>}, Result).
+
+custom_quotes(_Config) ->
+    % Regression: the `quotes' option used to be silently ignored because the
+    % decoder looked up a misspelled `qoutes' key, so a custom quote character
+    % was never stripped nor unescaped.
+    Opts = #{quotes => <<$'>>},
+    ?assertEqual(
+        {ok, [[<<"a'b">>, <<"c">>]]},
+        erl_csv:decode(<<"'a''b',c\n">>, Opts)
+    ).
+
+crlf_delimiter(_Config) ->
+    % Regression: a multi-byte delimiter used to crash the decoder with a
+    % case_clause because only the single byte following each field was
+    % inspected to tell a separator apart from a line delimiter.
+    Opts = #{delimiter => <<"\r\n">>},
+    Rows = [[<<"a">>, <<"b">>], [<<"c">>, <<"d">>]],
+    Encoded = unicode:characters_to_binary(erl_csv:encode(Rows, Opts)),
+    ?assertEqual(<<"a,b\r\nc,d\r\n">>, Encoded),
+    ?assertEqual({ok, Rows}, erl_csv:decode(Encoded, Opts)).
 
 quotes_and_newlines(Config) ->
     % given

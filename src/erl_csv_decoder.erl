@@ -18,7 +18,7 @@
 decode(Chunk, Opts) ->
     Separator = maps:get(separator, Opts, ?SEPARATOR),
     Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
-    Quotes = maps:get(qoutes, Opts, ?QUOTES),
+    Quotes = maps:get(quotes, Opts, ?QUOTES),
     Regex = build_regex(Opts),
     State = #csv_decoder{separator = Separator, line_break = Delimiter, quotes = Quotes},
     Match = re:run(Chunk, Regex, [global, {capture, all, index}]),
@@ -103,24 +103,28 @@ process_chunk([], Chunk, #csv_decoder{}, [], Acc, LenProcessed) ->
         _ -> {has_trailer, lists:reverse(Acc), NewChunk}
     end;
 process_chunk(
-    [[{Pos, Len} | _] | Matches],
+    [[{Pos, Len} | _] = Match | Matches],
     Chunk,
-    #csv_decoder{line_break = LineBreak, separator = SepBy} = State,
+    #csv_decoder{line_break = LineBreak} = State,
     LineAcc,
     Acc,
     _
 ) ->
-    Csv = binary:part(Chunk, Pos, Len - 1),
+    %% The last capture group of the regex is the (separator | delimiter) that
+    %% terminates the field. Using it (instead of assuming a single byte) is what
+    %% lets multi-byte delimiters such as <<"\r\n">> work.
+    {TermPos, TermLen} = lists:last(Match),
+    Csv = binary:part(Chunk, Pos, Len - TermLen),
     Csv2 = format_term(Csv, State),
-    case binary:part(Chunk, Pos + Len, -1) of
+    case binary:part(Chunk, TermPos, TermLen) of
         LineBreak ->
             NewLine = lists:reverse([Csv2 | LineAcc]),
             process_chunk(Matches, Chunk, State, [], [NewLine | Acc], Pos + Len);
-        SepBy ->
+        _Separator ->
             process_chunk(Matches, Chunk, State, [Csv2 | LineAcc], Acc, Pos + Len)
     end.
 
--spec filter_incomplete_lines([matches()], binary(), <<_:8>>) ->
+-spec filter_incomplete_lines([matches()], binary(), <<_:8>> | <<_:16>>) ->
     {[matches()], [matches()]}.
 filter_incomplete_lines(Matches, Chunk, LineBreak) ->
     Fun = fun(Match) ->
@@ -146,7 +150,7 @@ format_term(CsvTerm, #csv_decoder{quotes = Q}) ->
 build_regex(Opts) ->
     Separator = maps:get(separator, Opts, ?SEPARATOR),
     Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
-    Quotes = maps:get(qoutes, Opts, ?QUOTES),
+    Quotes = maps:get(quotes, Opts, ?QUOTES),
     case maps:get(regex, Opts, undefined) of
         undefined ->
             {ok, Regex0} = re:compile(
