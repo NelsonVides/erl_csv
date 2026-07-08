@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Dependabot has no native rebar3/Hex support, and this project pulls no
+  # runtime dependencies, so GitHub Actions are the only thing to keep current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    cooldown:
+      default-days: 3
+    groups:
+      actions-patch-minor:
+        update-types:
+          - patch
+          - minor
