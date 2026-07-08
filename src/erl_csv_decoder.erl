@@ -155,7 +155,15 @@ decode_unquoted_field(Bin, Pos, Size, #csv_decoder{terminators = Terminators} = 
     binary(), non_neg_integer(), non_neg_integer(), non_neg_integer(), csv_decoder()
 ) ->
     field_result().
-decode_quoted_field(Bin, ContentStart, SearchPos, Size, #csv_decoder{quotes = Q} = State) ->
+decode_quoted_field(Bin, ContentStart, SearchPos, Size, State) ->
+    decode_quoted_field(Bin, ContentStart, SearchPos, Size, State, false).
+
+-spec decode_quoted_field(
+    binary(), non_neg_integer(), non_neg_integer(), non_neg_integer(), csv_decoder(), boolean()
+) ->
+    field_result().
+decode_quoted_field(Bin, ContentStart, SearchPos, Size, State, Escaped) ->
+    #csv_decoder{quotes = Q} = State,
     case binary:match(Bin, Q, [{scope, {SearchPos, Size - SearchPos}}]) of
         nomatch ->
             incomplete;
@@ -163,9 +171,11 @@ decode_quoted_field(Bin, ContentStart, SearchPos, Size, #csv_decoder{quotes = Q}
             AfterQuote = QuotePos + 1,
             case is_escaped_quote(Bin, AfterQuote, Size, Q) of
                 true ->
-                    decode_quoted_field(Bin, ContentStart, AfterQuote + 1, Size, State);
+                    decode_quoted_field(Bin, ContentStart, AfterQuote + 1, Size, State, true);
                 false ->
-                    close_quoted_field(Bin, ContentStart, QuotePos, AfterQuote, Size, State)
+                    close_quoted_field(
+                        Bin, ContentStart, QuotePos, AfterQuote, Size, State, Escaped
+                    )
             end
     end.
 
@@ -175,13 +185,14 @@ decode_quoted_field(Bin, ContentStart, SearchPos, Size, #csv_decoder{quotes = Q}
     non_neg_integer(),
     non_neg_integer(),
     non_neg_integer(),
-    csv_decoder()
+    csv_decoder(),
+    boolean()
 ) ->
     field_result().
-close_quoted_field(Bin, ContentStart, QuotePos, AfterQuote, Size, State) ->
+close_quoted_field(Bin, ContentStart, QuotePos, AfterQuote, Size, State, Escaped) ->
     case terminator_at(Bin, AfterQuote, Size, State) of
         {Kind, Next} ->
-            {Kind, unescape(Bin, ContentStart, QuotePos, State), Next};
+            {Kind, quoted_value(Bin, ContentStart, QuotePos, State, Escaped), Next};
         eof ->
             %% Closing quote but no terminator yet: the row is not complete.
             incomplete;
@@ -191,6 +202,15 @@ close_quoted_field(Bin, ContentStart, QuotePos, AfterQuote, Size, State) ->
             %% verbatim rather than dropping data.
             decode_unquoted_field(Bin, ContentStart - 1, Size, State)
     end.
+
+%% Only pay for un-escaping (a full binary:replace scan and copy) when a doubled
+%% quote was actually seen; otherwise the value is the raw slice as-is.
+-spec quoted_value(binary(), non_neg_integer(), non_neg_integer(), csv_decoder(), boolean()) ->
+    binary().
+quoted_value(Bin, ContentStart, QuotePos, _State, false) ->
+    binary:part(Bin, ContentStart, QuotePos - ContentStart);
+quoted_value(Bin, ContentStart, QuotePos, State, true) ->
+    unescape(Bin, ContentStart, QuotePos, State).
 
 -spec is_escaped_quote(binary(), non_neg_integer(), non_neg_integer(), <<_:8>>) -> boolean().
 is_escaped_quote(_Bin, AfterQuote, Size, _Q) when AfterQuote >= Size ->
