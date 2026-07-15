@@ -25,6 +25,6 @@ jobs:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
         run: rebar3 hex publish -r hexpm --yes
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.1
         with:
           generate_release_notes: true
