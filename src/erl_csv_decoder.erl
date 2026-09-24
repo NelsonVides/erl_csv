@@ -61,14 +61,33 @@ decode_s(#csv_stream{hd = Bin, opts = Opts} = Stream) ->
             SavedStream = Stream#csv_stream{hd = Trailer},
             case get_more_stream(SavedStream) of
                 {error, Reason} -> {error, Reason};
+                stream_end -> last_rows(Decoded, Trailer, Opts);
                 MoreStream -> {ok, Decoded, MoreStream}
             end;
         {nomatch, NotMatched} ->
             SavedStream = Stream#csv_stream{hd = NotMatched},
-            decode_s(get_more_stream(SavedStream))
+            case get_more_stream(SavedStream) of
+                stream_end -> last_rows([], NotMatched, Opts);
+                MoreStream -> decode_s(MoreStream)
+            end
     end;
 decode_s({error, Reason}) ->
     {error, Reason}.
+
+-spec last_rows([[binary()]], binary(), erl_csv:decode_opts()) ->
+    {ok, [[binary()]], erl_csv:csv_stream()} | {error, term()}.
+last_rows(Decoded, <<>>, _Opts) ->
+    {ok, Decoded, stream_end};
+last_rows(Decoded, Trailer, Opts) ->
+    Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
+    case decode(<<Trailer/binary, Delimiter/binary>>, Opts) of
+        {ok, Rows} ->
+            {ok, Decoded ++ Rows, stream_end};
+        _ when Decoded =:= [] ->
+            {error, {unterminated_quoted_field, Trailer}};
+        _ ->
+            {ok, Decoded, #csv_stream{hd = Trailer, tl = fun() -> stream_end end, opts = Opts}}
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 -spec get_more_stream(erl_csv:csv_stream()) -> erl_csv:maybe_csv_stream().

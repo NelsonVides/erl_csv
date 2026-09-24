@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Fixed
+
+- `decode_s/1` dropped the last row of a file that did not end with a line break.
+  That row is now returned, and a quoted field that is still open at the end of the input
+  gives `{error, {unterminated_quoted_field, Trailer}}` instead of being dropped.
+- `decode_new_s/2` ignored its options: every file was decoded with the defaults.
+- Files are now read in chunks of `iobuf` bytes instead of line by line. Reading lines turned every
+  CRLF into LF, even inside quoted fields, so a `<<"\r\n">>` delimiter could never match.
+- `decode_new_s/1,2` crashed with a `badmatch` on a file that cannot be opened, instead of returning
+  `{error, Reason}`.
+- `encode/2` with `headers` set to a list did not write the header row, although the documentation
+  said it did.
+- `encode/2` with `headers => true` took each map's values in that map's own order, so a map with
+  other keys than the first one put its values under the wrong headers. Values are now looked up by
+  header, and a missing key raises `{badkey, Key}`, as it already did with a list of headers.
+- Tuples and other terms were quoted without doubling the quotes inside them, which produced invalid
+  CSV, and atoms were never quoted, even when they contained the separator.
+- Atoms and other terms were written as lists of code points rather than UTF-8, so
+  `iolist_to_binary/1` produced Latin-1 or crashed on them. They are now written as UTF-8, with terms
+  formatted by `~tp`.
+- Floats were written with six decimals, losing precision: `1.0e-7` became `0.000000`. They are now
+  written in the shortest form that reads back as the same float, so `1.5` is now written as `1.5`
+  rather than `1.500000`.
+- The documentation of `decode/2` listed a `headers` option that was never implemented.
+
 ## v0.5.0
 
 ### Changed

@@ -95,14 +95,20 @@ new(Head, Fun) when is_function(Fun, 0) ->
 -spec read_file(file:name_all(), map()) -> erl_csv:maybe_csv_stream().
 read_file(File, Opts) ->
     BufferSize = maps:get(iobuf, Opts, ?DEFAULT_BUFFER_SIZE),
-    {ok, FD} = file:open(File, [raw, binary, read, {encoding, utf8}, {read_ahead, BufferSize}]),
-    istream(FD).
+    case file:open(File, [raw, binary, read, {encoding, utf8}, {read_ahead, BufferSize}]) of
+        {ok, FD} -> istream(FD, BufferSize, Opts);
+        {error, Reason} -> {error, Reason}
+    end.
 
--spec istream(term()) -> erl_csv:maybe_csv_stream().
-istream(FD) when is_tuple(FD), erlang:element(1, FD) =:= file_descriptor ->
-    case file:read_line(FD) of
+%% The file is read in chunks of BufferSize bytes, not line by line: reading
+%% lines would turn every CRLF into LF, even inside quoted fields. A row cut at
+%% the end of a chunk is completed with the next one by decode_s/1, which reads
+%% the decode options from each chunk.
+-spec istream(term(), pos_integer(), map()) -> erl_csv:maybe_csv_stream().
+istream(FD, BufferSize, Opts) when is_tuple(FD), erlang:element(1, FD) =:= file_descriptor ->
+    case file:read(FD, BufferSize) of
         {ok, Chunk} ->
-            new(Chunk, fun() -> istream(FD) end);
+            #csv_stream{hd = Chunk, tl = fun() -> istream(FD, BufferSize, Opts) end, opts = Opts};
         eof ->
             file:close(FD),
             new();

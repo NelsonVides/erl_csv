@@ -11,7 +11,8 @@ all() ->
         {group, options},
         {group, decode_edge},
         {group, nimble},
-        {group, roundtrip}
+        {group, roundtrip},
+        {group, regressions}
     ].
 
 groups() ->
@@ -60,6 +61,21 @@ groups() ->
         {roundtrip, [parallel], [
             roundtrip_special_chars,
             roundtrip_fuzz
+        ]},
+        {regressions, [parallel], [
+            stream_last_row_without_line_break,
+            stream_last_line_without_separator,
+            stream_last_row_keeps_options,
+            stream_unterminated_quote_at_end,
+            stream_missing_file,
+            stream_crlf_inside_quotes,
+            stream_small_chunks,
+            encode_headers_list_writes_header_row,
+            encode_headers_true_looks_values_up_by_key,
+            encode_term_with_quotes,
+            encode_atom_with_separator,
+            encode_utf8_atoms_and_terms,
+            encode_floats_round_trip
         ]}
     ].
 
@@ -393,3 +409,133 @@ random_row() ->
 
 random_field() ->
     list_to_binary([rand:uniform(256) - 1 || _ <- lists:seq(1, rand:uniform(9) - 1)]).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Regressions
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+stream_last_row_without_line_break(Config) ->
+    % The last row used to be dropped when the file did not end with a line
+    % break: it was waiting as a trailer when the stream ran out.
+    File = write_file(Config, "last_row.csv", <<"a,b\n1,2\n3,4">>),
+    ?assertEqual(
+        {[[<<"a">>, <<"b">>], [<<"1">>, <<"2">>], [<<"3">>, <<"4">>]], stream_end},
+        stream_file(File, #{})
+    ).
+
+stream_last_line_without_separator(Config) ->
+    % Same, for a last line with neither a separator nor a line break.
+    File = write_file(Config, "last_line.csv", <<"a\nb">>),
+    ?assertEqual({[[<<"a">>], [<<"b">>]], stream_end}, stream_file(File, #{})).
+
+stream_last_row_keeps_options(Config) ->
+    % The options given to decode_new_s/2 used to be ignored altogether.
+    File = write_file(Config, "last_row_opts.csv", <<"a;b\r\n1;2">>),
+    Opts = #{separator => <<$;>>, delimiter => <<"\r\n">>},
+    ?assertEqual({[[<<"a">>, <<"b">>], [<<"1">>, <<"2">>]], stream_end}, stream_file(File, Opts)).
+
+stream_unterminated_quote_at_end(Config) ->
+    % A quoted field that is never closed used to be dropped silently too.
+    File = write_file(Config, "unterminated.csv", <<"a,b\n\"c,d\n">>),
+    ?assertEqual(
+        {[[<<"a">>, <<"b">>]], {error, {unterminated_quoted_field, <<"\"c,d\n">>}}},
+        stream_file(File, #{})
+    ).
+
+stream_missing_file(Config) ->
+    % Used to crash with a badmatch instead of returning the error.
+    File = filename:join(?config(priv_dir, Config), "does_not_exist.csv"),
+    ?assertEqual({error, enoent}, erl_csv:decode_new_s(File)).
+
+stream_crlf_inside_quotes(Config) ->
+    % Files used to be read line by line, which turned every CRLF into LF, even
+    % inside quoted fields.
+    File = write_file(Config, "crlf.csv", <<"a,\"x\r\ny\"\r\nb,c\r\n">>),
+    ?assertEqual(
+        {[[<<"a">>, <<"x\r\ny">>], [<<"b">>, <<"c">>]], stream_end},
+        stream_file(File, #{delimiter => <<"\r\n">>})
+    ).
+
+stream_small_chunks(Config) ->
+    % Tiny reads cut rows, quoted fields, escaped quotes and CRLF delimiters at
+    % every possible place; the stream must still match decoding the whole file.
+    _ = rand:seed(exsss, {9, 8, 7}),
+    Opts = #{delimiter => <<"\r\n">>},
+    Rows = lists:append([random_rows() || _ <- lists:seq(1, 20)]),
+    Encoded = iolist_to_binary(erl_csv:encode(Rows, Opts)),
+    File = write_file(Config, "chunks.csv", Encoded),
+    ?assertEqual({ok, Rows}, erl_csv:decode(Encoded, Opts)),
+    [
+        ?assertEqual({Rows, stream_end}, stream_file(File, Opts#{iobuf => Size}))
+     || Size <- [1, 2, 3, 7, 64]
+    ].
+
+encode_headers_list_writes_header_row(_Config) ->
+    % The header row was documented but never written for a list of headers.
+    Rows = [#{a => 1, b => 2}, #{a => 3, b => 4}],
+    ?assertEqual(
+        <<"b,a\n2,1\n4,3\n">>,
+        iolist_to_binary(erl_csv:encode(Rows, #{headers => [b, a]}))
+    ).
+
+encode_headers_true_looks_values_up_by_key(_Config) ->
+    % Values used to be taken in each map's own order, so a map with an extra
+    % key shifted its values under the wrong headers.
+    % Binary keys, since maps:keys/1 orders atom keys by their place in the
+    % atom table.
+    Rows = [#{<<"a">> => 1, <<"b">> => 2}, #{<<"a">> => 3, <<"b">> => 4, <<"c">> => 5}],
+    ?assertEqual(
+        <<"a,b\n1,2\n3,4\n">>,
+        iolist_to_binary(erl_csv:encode(Rows, #{headers => true}))
+    ),
+    ?assertError(
+        {badkey, <<"b">>},
+        erl_csv:encode([#{<<"a">> => 1, <<"b">> => 2}, #{<<"a">> => 3}], #{headers => true})
+    ).
+
+encode_term_with_quotes(_Config) ->
+    % Tuples and other terms were quoted without doubling the quotes inside,
+    % which ended the field early.
+    Encoded = iolist_to_binary(erl_csv:encode([[{a, "b"}, <<"c">>]])),
+    ?assertEqual(<<"\"{a,\"\"b\"\"}\",c\n">>, Encoded),
+    ?assertEqual({ok, [[<<"{a,\"b\"}">>, <<"c">>]]}, erl_csv:decode(Encoded)).
+
+encode_atom_with_separator(_Config) ->
+    ?assertEqual(<<"\"'a,b'\",c\n">>, iolist_to_binary(erl_csv:encode([['a,b', c]]))).
+
+encode_utf8_atoms_and_terms(_Config) ->
+    % Atoms and terms were written as code points rather than UTF-8, so
+    % iolist_to_binary/1 either crashed or produced Latin-1. The term prints the
+    % same whatever the VM's printable range (+pc): a binary or list with
+    % characters beyond Latin-1 would not.
+    Rows = [[café, '日本', {'é', '日本', <<"é"/utf8>>}]],
+    ?assertEqual(
+        <<"café,'日本',\"{é,'日本',<<\"\"é\"\"/utf8>>}\"\n"/utf8>>,
+        iolist_to_binary(erl_csv:encode(Rows))
+    ).
+
+encode_floats_round_trip(_Config) ->
+    % Floats were written with six decimals, so 1.0e-7 became 0.000000.
+    Floats = [1.5, 1.0e-7, 0.1, -0.0, 1.0e20, 123456789.123],
+    Encoded = iolist_to_binary(erl_csv:encode([Floats])),
+    ?assertEqual(<<"1.5,1.0e-7,0.1,-0.0,1.0e20,123456789.123\n">>, Encoded),
+    {ok, [Decoded]} = erl_csv:decode(Encoded),
+    ?assertEqual(Floats, [binary_to_float(F) || F <- Decoded]).
+
+write_file(Config, Name, Content) ->
+    File = filename:join(?config(priv_dir, Config), Name),
+    ok = file:write_file(File, Content),
+    File.
+
+%% Consume a whole stream: the rows, and how it ended.
+stream_file(File, Opts) ->
+    {ok, Stream} = erl_csv:decode_new_s(File, Opts),
+    stream_rows(Stream, []).
+
+stream_rows(stream_end, Acc) ->
+    {lists:append(lists:reverse(Acc)), stream_end};
+stream_rows(Stream, Acc) ->
+    case erl_csv:decode_s(Stream) of
+        {ok, Rows, Next} -> stream_rows(Next, [Rows | Acc]);
+        {error, Reason} -> {lists:append(lists:reverse(Acc)), {error, Reason}}
+    end.
