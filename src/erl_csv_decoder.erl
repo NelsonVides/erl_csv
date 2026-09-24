@@ -5,39 +5,36 @@
 
 -export([decode/2, decode_new_s/2, decode_s/1]).
 
+%% The decoder is a single tail-recursive loop that walks the chunk one byte at a time.
+%% Check with `erlc +bin_opt_info' that every loop function keeps reusing the context.
 -record(csv_decoder, {
-    line_break = ?DELIMITER :: binary(),
-    line_break_size = 1 :: pos_integer(),
-    separator = ?SEPARATOR :: <<_:8>>,
-    quotes = ?QUOTES :: <<_:8>>,
-    quote_byte = $" :: byte(),
-    terminators :: binary:cp() | undefined
+    separator :: byte(),
+    quote :: byte(),
+    %% First byte of the line delimiter, and the bytes that must follow it.
+    delimiter :: byte(),
+    delimiter_rest :: binary()
 }).
 -type csv_decoder() :: #csv_decoder{}.
 
-%% Result of parsing a single field: which token terminated it, the field value,
-%% and the offset right after the terminator. `incomplete' means the field (and
-%% therefore its row) could not be completed within this chunk.
--type field_result() ::
-    {separator | delimiter, binary(), non_neg_integer()} | incomplete.
+-type row() :: [binary()].
+-type decoded() :: {ok, [row()]} | {has_trailer, [row()], binary()} | {nomatch, binary()}.
+%% Offsets of the quotes to drop from a quoted field, used in LIFO order
+-type escapes() :: [non_neg_integer()].
 
 -spec decode(iodata(), erl_csv:decode_opts()) ->
     {ok, iodata()} | {has_trailer, iodata(), iodata()} | {nomatch, iodata()}.
 decode(Chunk, Opts) ->
     Bin = iolist_to_binary(Chunk),
-    Separator = maps:get(separator, Opts, ?SEPARATOR),
-    Delimiter = maps:get(delimiter, Opts, ?DELIMITER),
-    Quotes = maps:get(quotes, Opts, ?QUOTES),
-    <<QuoteByte>> = Quotes,
+    <<Separator>> = maps:get(separator, Opts, ?SEPARATOR),
+    <<Quote>> = maps:get(quotes, Opts, ?QUOTES),
+    <<Delimiter, DelimiterRest/binary>> = maps:get(delimiter, Opts, ?DELIMITER),
     State = #csv_decoder{
         separator = Separator,
-        line_break = Delimiter,
-        line_break_size = byte_size(Delimiter),
-        quotes = Quotes,
-        quote_byte = QuoteByte,
-        terminators = binary:compile_pattern([Separator, Delimiter])
+        quote = Quote,
+        delimiter = Delimiter,
+        delimiter_rest = DelimiterRest
     },
-    decode_rows(Bin, 0, byte_size(Bin), State, []).
+    field_start(Bin, Bin, 0, 0, [], [], State).
 
 -spec decode_new_s(file:name_all(), erl_csv:decode_opts()) ->
     {ok, erl_csv:csv_stream()} | {error, term()}.
@@ -99,178 +96,173 @@ get_more_stream(Stream) ->
             NewStream
     end.
 
-%% Parse as many complete rows (rows terminated by an unquoted delimiter) as the
-%% chunk holds. Anything from the start of the first incomplete row onwards is
-%% returned to the caller as a trailer so it can be prepended to the next chunk.
--spec decode_rows(binary(), non_neg_integer(), non_neg_integer(), csv_decoder(), [[binary()]]) ->
-    {ok, [[binary()]]} | {has_trailer, [[binary()]], binary()} | {nomatch, binary()}.
-decode_rows(Bin, Pos, Size, _State, Acc) when Pos >= Size ->
-    case Acc of
-        [] -> {nomatch, Bin};
-        _ -> {ok, lists:reverse(Acc)}
+%% At the first byte of a field, at offset Pos. The fields of the current row so
+%% far are in Row (reversed); the row started at offset RowStart, which is where
+%% the trailer begins if the chunk ends before the row does.
+-spec field_start(
+    binary(), binary(), non_neg_integer(), non_neg_integer(), row(), [row()], csv_decoder()
+) -> decoded().
+field_start(<<C, Rest/binary>>, Bin, Pos, RowStart, Row, Rows, State) ->
+    case State of
+        #csv_decoder{quote = C} ->
+            quoted(Rest, Bin, Pos + 1, 0, RowStart, Row, Rows, [], State);
+        #csv_decoder{separator = C} ->
+            field_start(Rest, Bin, Pos + 1, RowStart, [<<>> | Row], Rows, State);
+        #csv_decoder{delimiter = C, delimiter_rest = DelimiterRest} ->
+            N = byte_size(DelimiterRest),
+            case Rest of
+                <<DelimiterRest:N/binary, Rest1/binary>> ->
+                    Next = Pos + 1 + N,
+                    Fields = lists:reverse(Row, [<<>>]),
+                    field_start(Rest1, Bin, Next, Next, [], [Fields | Rows], State);
+                _ ->
+                    unquoted(Rest, Bin, Pos, 1, RowStart, Row, Rows, State)
+            end;
+        _ ->
+            unquoted(Rest, Bin, Pos, 1, RowStart, Row, Rows, State)
     end;
-decode_rows(Bin, Pos, Size, State, Acc) ->
-    case decode_row(Bin, Pos, Pos, Size, State, []) of
-        {row, Fields, Next} ->
-            decode_rows(Bin, Next, Size, State, [Fields | Acc]);
-        {trailer, RowStart} ->
-            Trailer = binary:part(Bin, RowStart, Size - RowStart),
-            trailer_result(Bin, Trailer, State, Acc)
-    end.
+field_start(<<>>, Bin, _Pos, _RowStart, [], [], _State) ->
+    {nomatch, Bin};
+field_start(<<>>, _Bin, _Pos, _RowStart, [], Rows, _State) ->
+    {ok, lists:reverse(Rows)};
+field_start(<<>>, Bin, _Pos, RowStart, _Row, Rows, State) ->
+    %% A separator was the last byte of the chunk: its row is incomplete.
+    trailer(Bin, RowStart, Rows, State).
 
--spec trailer_result(binary(), binary(), csv_decoder(), [[binary()]]) ->
-    {has_trailer, [[binary()]], binary()} | {nomatch, binary()}.
-trailer_result(Bin, Trailer, #csv_decoder{terminators = Terminators}, []) ->
-    %% No complete row was produced. Keep the historical distinction: when the
-    %% chunk holds no separator nor delimiter at all it is a `nomatch', otherwise
-    %% it is a partial row worth carrying over as a trailer.
-    case binary:match(Bin, Terminators) of
-        nomatch -> {nomatch, Trailer};
-        _ -> {has_trailer, [], Trailer}
-    end;
-trailer_result(_Bin, Trailer, _State, Acc) ->
-    {has_trailer, lists:reverse(Acc), Trailer}.
-
--spec decode_row(
-    binary(), non_neg_integer(), non_neg_integer(), non_neg_integer(), csv_decoder(), [binary()]
-) ->
-    {row, [binary()], non_neg_integer()} | {trailer, non_neg_integer()}.
-decode_row(Bin, RowStart, Pos, Size, State, Fields) ->
-    case decode_field(Bin, Pos, Size, State) of
-        {separator, Field, Next} ->
-            decode_row(Bin, RowStart, Next, Size, State, [Field | Fields]);
-        {delimiter, Field, Next} ->
-            {row, lists:reverse([Field | Fields]), Next};
-        incomplete ->
-            {trailer, RowStart}
-    end.
-
--spec decode_field(binary(), non_neg_integer(), non_neg_integer(), csv_decoder()) ->
-    field_result().
-decode_field(_Bin, Pos, Size, _State) when Pos >= Size ->
-    %% A separator was the last byte of the chunk: the trailing field (and its
-    %% row) is incomplete until more data arrives.
-    incomplete;
-decode_field(Bin, Pos, Size, #csv_decoder{quote_byte = QuoteByte} = State) ->
-    case binary:at(Bin, Pos) of
-        QuoteByte -> decode_quoted_field(Bin, Pos + 1, Pos + 1, Size, State);
-        _ -> decode_unquoted_field(Bin, Pos, Size, State)
-    end.
-
--spec decode_unquoted_field(binary(), non_neg_integer(), non_neg_integer(), csv_decoder()) ->
-    field_result().
-decode_unquoted_field(Bin, Pos, Size, #csv_decoder{terminators = Terminators} = State) ->
-    case binary:match(Bin, Terminators, [{scope, {Pos, Size - Pos}}]) of
-        nomatch ->
-            incomplete;
-        {TermPos, TermLen} ->
-            Field = binary:part(Bin, Pos, TermPos - Pos),
-            {kind_of_terminator(Bin, TermPos, TermLen, State), Field, TermPos + TermLen}
-    end.
-
-%% A field that opens with the quote character. Scan for the matching closing
-%% quote, treating a doubled quote (`""') as an escaped literal quote.
--spec decode_quoted_field(
-    binary(), non_neg_integer(), non_neg_integer(), non_neg_integer(), csv_decoder()
-) ->
-    field_result().
-decode_quoted_field(Bin, ContentStart, SearchPos, Size, State) ->
-    decode_quoted_field(Bin, ContentStart, SearchPos, Size, State, false).
-
--spec decode_quoted_field(
-    binary(), non_neg_integer(), non_neg_integer(), non_neg_integer(), csv_decoder(), boolean()
-) ->
-    field_result().
-decode_quoted_field(Bin, ContentStart, SearchPos, Size, State, Escaped) ->
-    #csv_decoder{quotes = Q} = State,
-    case binary:match(Bin, Q, [{scope, {SearchPos, Size - SearchPos}}]) of
-        nomatch ->
-            incomplete;
-        {QuotePos, _} ->
-            AfterQuote = QuotePos + 1,
-            case is_escaped_quote(Bin, AfterQuote, Size, Q) of
-                true ->
-                    decode_quoted_field(Bin, ContentStart, AfterQuote + 1, Size, State, true);
-                false ->
-                    close_quoted_field(
-                        Bin, ContentStart, QuotePos, AfterQuote, Size, State, Escaped
-                    )
-            end
-    end.
-
--spec close_quoted_field(
+%% Inside an unquoted field that started at Start and is Len bytes long so far.
+%% Quotes are not special here: a stray quote is kept verbatim.
+-spec unquoted(
+    binary(),
     binary(),
     non_neg_integer(),
     non_neg_integer(),
     non_neg_integer(),
+    row(),
+    [row()],
+    csv_decoder()
+) -> decoded().
+unquoted(<<C, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, State) ->
+    case State of
+        #csv_decoder{separator = C} ->
+            Field = binary_part(Bin, Start, Len),
+            field_start(Rest, Bin, Start + Len + 1, RowStart, [Field | Row], Rows, State);
+        #csv_decoder{delimiter = C, delimiter_rest = DelimiterRest} ->
+            N = byte_size(DelimiterRest),
+            case Rest of
+                <<DelimiterRest:N/binary, Rest1/binary>> ->
+                    Next = Start + Len + 1 + N,
+                    Fields = lists:reverse(Row, [binary_part(Bin, Start, Len)]),
+                    field_start(Rest1, Bin, Next, Next, [], [Fields | Rows], State);
+                _ ->
+                    %% Only a prefix of a multi-byte delimiter: part of the field.
+                    unquoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows, State)
+            end;
+        _ ->
+            unquoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows, State)
+    end;
+unquoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, State) ->
+    trailer(Bin, RowStart, Rows, State).
+
+%% Inside a quoted field whose content started at Start and is Len bytes long so
+%% far (counting both quotes of any doubled pair seen, recorded in Escapes).
+-spec quoted(
+    binary(),
+    binary(),
     non_neg_integer(),
-    csv_decoder(),
-    boolean()
-) ->
-    field_result().
-close_quoted_field(Bin, ContentStart, QuotePos, AfterQuote, Size, State, Escaped) ->
-    case terminator_at(Bin, AfterQuote, Size, State) of
-        {Kind, Next} ->
-            {Kind, quoted_value(Bin, ContentStart, QuotePos, State, Escaped), Next};
-        eof ->
-            %% Closing quote but no terminator yet: the row is not complete.
-            incomplete;
-        garbage ->
-            %% Content between the closing quote and the terminator is malformed;
-            %% fall back to reading the whole field (from the opening quote)
-            %% verbatim rather than dropping data.
-            decode_unquoted_field(Bin, ContentStart - 1, Size, State)
-    end.
+    non_neg_integer(),
+    non_neg_integer(),
+    row(),
+    [row()],
+    escapes(),
+    csv_decoder()
+) -> decoded().
+quoted(<<C, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes, State) ->
+    case State of
+        #csv_decoder{quote = C} ->
+            after_quote(Rest, Bin, Start, Len, RowStart, Row, Rows, Escapes, State);
+        _ ->
+            quoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows, Escapes, State)
+    end;
+quoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes, State) ->
+    trailer(Bin, RowStart, Rows, State).
 
-%% Only pay for un-escaping (a full binary:replace scan and copy) when a doubled
-%% quote was actually seen; otherwise the value is the raw slice as-is.
--spec quoted_value(binary(), non_neg_integer(), non_neg_integer(), csv_decoder(), boolean()) ->
-    binary().
-quoted_value(Bin, ContentStart, QuotePos, _State, false) ->
-    binary:part(Bin, ContentStart, QuotePos - ContentStart);
-quoted_value(Bin, ContentStart, QuotePos, State, true) ->
-    unescape(Bin, ContentStart, QuotePos, State).
+%% Right after a quote inside a quoted field: either the first quote of a
+%% doubled (escaped) pair, or the closing quote, which must be followed by a
+%% separator or a delimiter.
+-spec after_quote(
+    binary(),
+    binary(),
+    non_neg_integer(),
+    non_neg_integer(),
+    non_neg_integer(),
+    row(),
+    [row()],
+    escapes(),
+    csv_decoder()
+) -> decoded().
+after_quote(<<C, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes, State) ->
+    case State of
+        #csv_decoder{quote = C} ->
+            Escapes1 = [Start + Len + 1 | Escapes],
+            quoted(Rest, Bin, Start, Len + 2, RowStart, Row, Rows, Escapes1, State);
+        #csv_decoder{separator = C} ->
+            Field = quoted_value(Bin, Start, Len, Escapes),
+            field_start(Rest, Bin, Start + Len + 2, RowStart, [Field | Row], Rows, State);
+        #csv_decoder{delimiter = C, delimiter_rest = DelimiterRest} ->
+            N = byte_size(DelimiterRest),
+            case Rest of
+                <<DelimiterRest:N/binary, Rest1/binary>> ->
+                    Next = Start + Len + 2 + N,
+                    Fields = lists:reverse(Row, [quoted_value(Bin, Start, Len, Escapes)]),
+                    field_start(Rest1, Bin, Next, Next, [], [Fields | Rows], State);
+                _ ->
+                    malformed(Bin, Start, RowStart, Row, Rows, State)
+            end;
+        _ ->
+            malformed(Bin, Start, RowStart, Row, Rows, State)
+    end;
+after_quote(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes, State) ->
+    %% Closing quote but no terminator yet: the row is not complete.
+    trailer(Bin, RowStart, Rows, State).
 
--spec is_escaped_quote(binary(), non_neg_integer(), non_neg_integer(), <<_:8>>) -> boolean().
-is_escaped_quote(_Bin, AfterQuote, Size, _Q) when AfterQuote >= Size ->
-    false;
-is_escaped_quote(Bin, AfterQuote, _Size, Q) ->
-    binary:part(Bin, AfterQuote, 1) =:= Q.
+%% Content between the closing quote and the terminator is malformed; fall back
+%% to reading the whole field (from the opening quote) verbatim rather than
+%% dropping data.
+-spec malformed(binary(), non_neg_integer(), non_neg_integer(), row(), [row()], csv_decoder()) ->
+    decoded().
+malformed(Bin, Start, RowStart, Row, Rows, State) ->
+    OpeningQuote = Start - 1,
+    <<_:OpeningQuote/binary, Rest/binary>> = Bin,
+    unquoted(Rest, Bin, OpeningQuote, 0, RowStart, Row, Rows, State).
 
-%% Classify the terminator that binary:match/3 landed on for an unquoted field.
--spec kind_of_terminator(binary(), non_neg_integer(), non_neg_integer(), csv_decoder()) ->
-    separator | delimiter.
-kind_of_terminator(_Bin, _TermPos, TermLen, #csv_decoder{line_break_size = DelSize}) when
-    TermLen =/= DelSize
-->
-    %% Different length than the delimiter, so it can only be the separator.
-    separator;
-kind_of_terminator(Bin, TermPos, TermLen, #csv_decoder{line_break = Delimiter}) ->
-    case binary:part(Bin, TermPos, TermLen) of
-        Delimiter -> delimiter;
-        _ -> separator
-    end.
+%% Only pay for un-escaping (a copy) when a doubled quote was actually seen;
+%% otherwise the value is the raw slice as-is.
+-spec quoted_value(binary(), non_neg_integer(), non_neg_integer(), escapes()) -> binary().
+quoted_value(Bin, Start, Len, []) ->
+    binary_part(Bin, Start, Len);
+quoted_value(Bin, Start, Len, Escapes) ->
+    unescape(Bin, Start, Start + Len, Escapes, []).
 
-%% Determine what, if anything, terminates a field at the given position.
--spec terminator_at(binary(), non_neg_integer(), non_neg_integer(), csv_decoder()) ->
-    {separator | delimiter, non_neg_integer()} | eof | garbage.
-terminator_at(_Bin, Pos, Size, _State) when Pos >= Size ->
-    eof;
-terminator_at(Bin, Pos, Size, #csv_decoder{
-    separator = Sep, line_break = Delimiter, line_break_size = DelSize
-}) ->
-    case Pos + DelSize =< Size andalso binary:part(Bin, Pos, DelSize) =:= Delimiter of
-        true ->
-            {delimiter, Pos + DelSize};
-        false ->
-            SepSize = byte_size(Sep),
-            case binary:part(Bin, Pos, SepSize) =:= Sep of
-                true -> {separator, Pos + SepSize};
-                false -> garbage
-            end
-    end.
+%% The escapes are walked from last to first, so the slices between the dropped
+%% quotes come out in order without reversing.
+-spec unescape(binary(), non_neg_integer(), non_neg_integer(), escapes(), [binary()]) -> binary().
+unescape(Bin, Start, End, [Drop | Escapes], Acc) ->
+    unescape(Bin, Start, Drop, Escapes, [binary_part(Bin, Drop + 1, End - Drop - 1) | Acc]);
+unescape(Bin, Start, End, [], Acc) ->
+    iolist_to_binary([binary_part(Bin, Start, End - Start) | Acc]).
 
--spec unescape(binary(), non_neg_integer(), non_neg_integer(), csv_decoder()) -> binary().
-unescape(Bin, ContentStart, QuotePos, #csv_decoder{quotes = Q}) ->
-    Raw = binary:part(Bin, ContentStart, QuotePos - ContentStart),
-    binary:replace(Raw, <<Q/binary, Q/binary>>, Q, [global]).
+%% The chunk ended inside the row that started at RowStart: hand everything from
+%% there back to the caller so it can be prepended to the next chunk.
+-spec trailer(binary(), non_neg_integer(), [row()], csv_decoder()) -> decoded().
+trailer(Bin, RowStart, [], State) ->
+    %% No complete row was produced. Keep the historical distinction: when the
+    %% chunk holds no separator nor delimiter at all it is a `nomatch', otherwise
+    %% it is a partial row worth carrying over as a trailer.
+    #csv_decoder{separator = S, delimiter = D, delimiter_rest = DelimiterRest} = State,
+    Trailer = binary_part(Bin, RowStart, byte_size(Bin) - RowStart),
+    case binary:match(Bin, [<<S>>, <<D, DelimiterRest/binary>>]) of
+        nomatch -> {nomatch, Trailer};
+        _ -> {has_trailer, [], Trailer}
+    end;
+trailer(Bin, RowStart, Rows, _State) ->
+    {has_trailer, lists:reverse(Rows), binary_part(Bin, RowStart, byte_size(Bin) - RowStart)}.

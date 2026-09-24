@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `bench/` directory with Benchee benchmarks of decoding and encoding against other popular
   libraries. It is a standalone Mix project and is not part of the Hex package.
 
+### Changed
+
+- Decoding is 3-4.5x faster. The decoder is now a single tail-recursive loop
+  that walks the chunk byte by byte and cuts fields out of it with
+  `binary_part/3`, instead of calling `binary:match/3` for every field. Doubled
+  quotes are removed using positions recorded during that same pass, instead of
+  with `binary:replace/4`. Rows of long unquoted fields gain less, as the old
+  per-field calls were already cheap relative to scanning them.
+- Encoding is 1.4-1.7x faster. Rows are built front to back instead of being
+  interspersed and then reversed, and quotes are doubled with `binary:split/3`
+  instead of `binary:replace/4`.
+
 ### Fixed
 
 - `decode_s/1` dropped the last row of a file that did not end with a line break.
