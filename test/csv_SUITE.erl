@@ -10,7 +10,9 @@ all() ->
         {group, decode},
         {group, options},
         {group, decode_edge},
+        {group, encode_edge},
         {group, nimble},
+        {group, glazer},
         {group, roundtrip},
         {group, regressions}
     ].
@@ -42,7 +44,11 @@ groups() ->
         {decode_edge, [parallel], [
             decode_table,
             stray_quote_is_lossless,
-            lone_quote_is_a_trailer
+            lone_quote_is_a_trailer,
+            decode_split_anywhere
+        ]},
+        {encode_edge, [parallel], [
+            encode_table
         ]},
         % Learning tests ported from nimble_csv, adapted to erl_csv's chunk API.
         {nimble, [parallel], [
@@ -57,6 +63,15 @@ groups() ->
             nimble_multiline_quoted,
             nimble_escaped_escapes,
             nimble_unterminated_quote
+        ]},
+        % Learning tests ported from glazer, adapted to erl_csv's chunk API. How
+        % the three libraries differ on edge cases is tracked in
+        % bench/conformance.exs.
+        {glazer, [parallel], [
+            glazer_decode,
+            glazer_encode,
+            glazer_iolist_input,
+            glazer_round_trip
         ]},
         {roundtrip, [parallel], [
             roundtrip_special_chars,
@@ -278,6 +293,85 @@ lone_quote_is_a_trailer(_Config) ->
     % is what lets multi-line quoted fields reassemble across chunks.
     ?assertEqual({has_trailer, [], <<"\"\n">>}, erl_csv:decode(<<"\"\n">>)).
 
+decode_split_anywhere(_Config) ->
+    % Decoding a chunk and carrying its trailer over into the next one must give
+    % the same rows as decoding the whole input at once, wherever it is cut: in
+    % the middle of a field, of an escaped quote or of a CRLF delimiter.
+    _ = rand:seed(exsss, {5, 4, 3}),
+    Failures = lists:flatmap(
+        fun(_) ->
+            Rows = random_rows(),
+            Opts = lists:nth(rand:uniform(2), [#{}, #{delimiter => <<"\r\n">>}]),
+            Encoded = iolist_to_binary(erl_csv:encode(Rows, Opts)),
+            [
+                #{rows => Rows, opts => Opts, cut => Cut, got => Got}
+             || Cut <- lists:seq(0, byte_size(Encoded)),
+                Got <- [decode_in_two(Encoded, Cut, Opts)],
+                Got =/= Rows
+            ]
+        end,
+        lists:seq(1, 200)
+    ),
+    ?assertEqual([], lists:sublist(Failures, 3)).
+
+decode_in_two(Encoded, Cut, Opts) ->
+    <<Part1:Cut/binary, Part2/binary>> = Encoded,
+    {Rows1, Carry} = decode_part(Part1, Opts),
+    {Rows2, <<>>} = decode_part(<<Carry/binary, Part2/binary>>, Opts),
+    Rows1 ++ Rows2.
+
+decode_part(Bin, Opts) ->
+    case erl_csv:decode(Bin, Opts) of
+        {ok, Rows} -> {Rows, <<>>};
+        {has_trailer, Rows, Trailer} -> {Rows, Trailer};
+        {nomatch, Trailer} -> {[], Trailer}
+    end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Table-driven encode edge cases
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+encode_table(_Config) ->
+    Failures = lists:filtermap(
+        fun({Name, Input, Opts, Expected}) ->
+            Actual = unicode:characters_to_binary(erl_csv:encode(Input, Opts)),
+            case Actual =:= Expected of
+                true -> false;
+                false -> {true, #{case_name => Name, expected => Expected, actual => Actual}}
+            end
+        end,
+        encode_cases()
+    ),
+    ?assertEqual([], Failures).
+
+encode_cases() ->
+    D = #{},
+    [
+        % {Name, Input, Opts, Expected}
+        {plain, [[<<"a">>, <<"b">>]], D, <<"a,b\n">>},
+        {empty_input, [], D, <<>>},
+        {empty_row, [[]], D, <<"\n">>},
+        {empty_cells, [[<<>>, <<>>]], D, <<",\n">>},
+        {separator_quoted, [[<<"a,b">>]], D, <<"\"a,b\"\n">>},
+        {newline_quoted, [[<<"a\nb">>]], D, <<"\"a\nb\"\n">>},
+        {cr_quoted, [[<<"a\rb">>]], D, <<"\"a\rb\"\n">>},
+        {quote_escaped, [[<<"a\"b">>]], D, <<"\"a\"\"b\"\n">>},
+        {only_quotes, [[<<"\"\"">>]], D, <<"\"\"\"\"\"\"\n">>},
+        {quotes_at_edges, [[<<"\"a\"">>]], D, <<"\"\"\"a\"\"\"\n">>},
+        {custom_separator, [[<<"a,b">>, <<"c;d">>]], #{separator => <<$;>>}, <<"a,b;\"c;d\"\n">>},
+        {multibyte_delimiter, [[<<"a|b">>, <<"c||d">>]], #{delimiter => <<"||">>},
+            <<"a|b,\"c||d\"||">>},
+        {crlf_delimiter, [[<<"a">>], [<<"b">>]], #{delimiter => <<"\r\n">>}, <<"a\r\nb\r\n">>},
+        {tuple_row, [{<<"a">>, <<"b">>}], D, <<"a,b\n">>},
+        {numbers, [[1, -20, 1.5]], D, <<"1,-20,1.5\n">>},
+        {atoms, [[true, 'Hello World']], D, <<"true,'Hello World'\n">>},
+        {charlists, [["abc", "x,y"]], D, <<"abc,\"x,y\"\n">>},
+        {unicode, [[<<"caf", 233/utf8>>, [9731]]], D, <<"caf", 233/utf8, ",", 9731/utf8, "\n">>},
+        {tuple_cell, [[{a, 1}]], D, <<"\"{a,1}\"\n">>},
+        {headers_true, [#{<<"a">> => 1, <<"b">> => <<"x,y">>}], #{headers => true},
+            <<"a,b\n1,\"x,y\"\n">>}
+    ].
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Learning tests ported from nimble_csv
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -360,6 +454,80 @@ nimble_unterminated_quote(_Config) ->
     ?assertEqual(
         {has_trailer, [], <<"john,doe,\"1986\n">>},
         erl_csv:decode(<<"john,doe,\"1986\n">>)
+    ).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Learning tests ported from glazer
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+glazer_decode(_Config) ->
+    % glazer decodes whole documents; every input here ends with its line break
+    % so that erl_csv returns complete rows instead of a trailer.
+    Cases = [
+        {<<"a,,c\n">>, #{}, [[<<"a">>, <<>>, <<"c">>]]},
+        {<<"\"hello, world\",b\n">>, #{}, [[<<"hello, world">>, <<"b">>]]},
+        {<<"\"a \"\"quoted\"\" word\"\n">>, #{}, [[<<"a \"quoted\" word">>]]},
+        {<<"\"line1\r\nline2\",b\r\n">>, #{delimiter => <<"\r\n">>}, [
+            [<<"line1\r\nline2">>, <<"b">>]
+        ]},
+        {<<"\"\",b\n">>, #{}, [[<<>>, <<"b">>]]},
+        {<<"\"\"\"\"\"\"\n">>, #{}, [[<<"\"\"">>]]},
+        {<<"a,\"b,c\",d\n">>, #{}, [[<<"a">>, <<"b,c">>, <<"d">>]]},
+        {<<"a\tb\n">>, #{separator => <<$\t>>}, [[<<"a">>, <<"b">>]]},
+        {<<"\"a;b\";c\n">>, #{separator => <<$;>>}, [[<<"a;b">>, <<"c">>]]},
+        {<<";;\n">>, #{separator => <<$;>>}, [[<<>>, <<>>, <<>>]]}
+    ],
+    Failures = [
+        #{input => In, expected => Rows, actual => Actual}
+     || {In, Opts, Rows} <- Cases,
+        Actual <- [erl_csv:decode(In, Opts)],
+        Actual =/= {ok, Rows}
+    ],
+    ?assertEqual([], Failures).
+
+glazer_encode(_Config) ->
+    Cases = [
+        {[[<<"a">>, <<"b">>], [1, 2]], #{}, <<"a,b\n1,2\n">>},
+        {[[<<"a">>, <<"b">>], [1, 2]], #{delimiter => <<"\r\n">>}, <<"a,b\r\n1,2\r\n">>},
+        {[[]], #{}, <<"\n">>},
+        {[[123456789012345678901234567890]], #{}, <<"123456789012345678901234567890\n">>},
+        {[[-1, 2]], #{}, <<"-1,2\n">>},
+        {[[<<"hello, world">>, <<"b">>]], #{}, <<"\"hello, world\",b\n">>},
+        {[[<<"a \"quoted\" word">>]], #{}, <<"\"a \"\"quoted\"\" word\"\n">>},
+        {[[<<"line1\nline2">>]], #{}, <<"\"line1\nline2\"\n">>},
+        {[[<<"a">>, <<"b">>]], #{separator => <<$;>>}, <<"a;b\n">>},
+        {[[foo, 1.5]], #{}, <<"foo,1.5\n">>},
+        {[#{<<"a">> => 1, <<"b">> => 2}], #{headers => true}, <<"a,b\n1,2\n">>},
+        {[#{<<"a">> => 1, <<"b">> => 2}], #{headers => [<<"b">>, <<"a">>]}, <<"b,a\n2,1\n">>}
+    ],
+    Failures = [
+        #{input => Rows, expected => Csv, actual => Actual}
+     || {Rows, Opts, Csv} <- Cases,
+        Actual <- [iolist_to_binary(erl_csv:encode(Rows, Opts))],
+        Actual =/= Csv
+    ],
+    ?assertEqual([], Failures).
+
+glazer_iolist_input(_Config) ->
+    % Input split into nested iodata, even in the middle of a field or of an
+    % escaped quote, decodes as if it were one binary.
+    ?assertEqual(
+        {ok, [[<<"a">>, <<"b">>, <<"c">>], [<<"1">>, <<"2">>, <<"3">>]]},
+        erl_csv:decode([<<"a">>, [<<",">>, <<"b">>], [[<<",c\n">>]], <<"1,2,3\n">>])
+    ),
+    ?assertEqual(
+        {ok, [[<<"a">>, <<"b\"c">>, <<"d">>]]},
+        erl_csv:decode([<<"a,\"b\"\"">>, <<"c\",d\n">>])
+    ).
+
+glazer_round_trip(_Config) ->
+    Rows = [[<<"a \"quoted\"\nvalue">>, <<"b">>]],
+    ?assertEqual({ok, Rows}, erl_csv:decode(iolist_to_binary(erl_csv:encode(Rows)))),
+    Opts = #{headers => true, separator => <<$;>>},
+    Encoded = iolist_to_binary(erl_csv:encode([#{<<"a">> => <<"1">>, <<"b">> => <<"x;y">>}], Opts)),
+    ?assertEqual(
+        {ok, [[<<"a">>, <<"b">>], [<<"1">>, <<"x;y">>]]},
+        erl_csv:decode(Encoded, #{separator => <<$;>>})
     ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

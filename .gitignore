@@ -22,3 +22,4 @@ rebar3.crashdump
 tags
 priv/
 doc/
+/bench/deps

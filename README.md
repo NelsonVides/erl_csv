@@ -41,5 +41,8 @@ do_import(Stream, Decoded) ->
 
 ```
 
+## Benchmarks
+[`bench/`](https://github.com/NelsonVides/erl_csv/tree/main/bench) compares decoding and encoding against other popular libraries with Benchee; see its README for how to run it.
+
 ## More details
 [See the documentation for more details.](https://hexdocs.pm/erl_csv/)

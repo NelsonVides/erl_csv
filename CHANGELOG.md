@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Added
+
+- A `bench/` directory with Benchee benchmarks of decoding and encoding against other popular
+  libraries. It is a standalone Mix project and is not part of the Hex package.
+
 ### Fixed
 
 - `decode_s/1` dropped the last row of a file that did not end with a line break.
