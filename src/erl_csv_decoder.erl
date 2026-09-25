@@ -15,9 +15,11 @@
     delimiter_rest :: binary()
 }).
 -type csv_decoder() :: #csv_decoder{}.
--define(DEFAULT_DECODER, #csv_decoder{
-    separator = $,, quote = $", delimiter = $\n, delimiter_rest = <<>>
+-define(DEFAULT_DECODER(Delimiter, DelimiterRest), #csv_decoder{
+    separator = $,, quote = $", delimiter = Delimiter, delimiter_rest = DelimiterRest
 }).
+%% The line break the default-options tokenizer looks for.
+-type line_break() :: lf | crlf.
 
 -type row() :: [binary()].
 -type decoded() :: {ok, [row()]} | {has_trailer, [row()], binary()} | {nomatch, binary()}.
@@ -38,7 +40,8 @@ decode(Chunk, Opts) ->
         delimiter_rest = DelimiterRest
     },
     case State of
-        ?DEFAULT_DECODER -> default_field_start(Bin, Bin, 0, 0, [], []);
+        ?DEFAULT_DECODER($\n, <<>>) -> default_field_start(Bin, Bin, 0, 0, [], [], lf);
+        ?DEFAULT_DECODER($\r, <<"\n">>) -> default_field_start(Bin, Bin, 0, 0, [], [], crlf);
         _ -> field_start(Bin, Bin, 0, 0, [], [], State)
     end.
 
@@ -241,42 +244,56 @@ malformed(Bin, Start, RowStart, Row, Rows, State) ->
     <<_:OpeningQuote/binary, Rest/binary>> = Bin,
     unquoted(Rest, Bin, OpeningQuote, 0, RowStart, Row, Rows, State).
 
-%% The same tokenizer, for the default options only: comparing each byte with
-%% constants rather than with the fields of the options record makes unquoted
-%% data 20-40% faster.
+%% The same tokenizer, for the default separator and quote with either line
+%% break: comparing each byte with constants rather than with the fields of the
+%% options record makes unquoted data 20-40% faster.
 -spec default_field_start(
-    binary(), binary(), non_neg_integer(), non_neg_integer(), row(), [row()]
+    binary(), binary(), non_neg_integer(), non_neg_integer(), row(), [row()], line_break()
 ) -> decoded().
-default_field_start(<<$", Rest/binary>>, Bin, Pos, RowStart, Row, Rows) ->
-    default_quoted(Rest, Bin, Pos + 1, 0, RowStart, Row, Rows, []);
-default_field_start(<<$,, Rest/binary>>, Bin, Pos, RowStart, Row, Rows) ->
-    default_field_start(Rest, Bin, Pos + 1, RowStart, [<<>> | Row], Rows);
-default_field_start(<<$\n, Rest/binary>>, Bin, Pos, _RowStart, Row, Rows) ->
+default_field_start(<<$", Rest/binary>>, Bin, Pos, RowStart, Row, Rows, LB) ->
+    default_quoted(Rest, Bin, Pos + 1, 0, RowStart, Row, Rows, [], LB);
+default_field_start(<<$,, Rest/binary>>, Bin, Pos, RowStart, Row, Rows, LB) ->
+    default_field_start(Rest, Bin, Pos + 1, RowStart, [<<>> | Row], Rows, LB);
+default_field_start(<<$\n, Rest/binary>>, Bin, Pos, _RowStart, Row, Rows, lf) ->
     Next = Pos + 1,
-    default_field_start(Rest, Bin, Next, Next, [], [lists:reverse(Row, [<<>>]) | Rows]);
-default_field_start(<<_, Rest/binary>>, Bin, Pos, RowStart, Row, Rows) ->
-    default_unquoted(Rest, Bin, Pos, 1, RowStart, Row, Rows);
-default_field_start(<<>>, Bin, _Pos, _RowStart, [], []) ->
+    default_field_start(Rest, Bin, Next, Next, [], [lists:reverse(Row, [<<>>]) | Rows], lf);
+default_field_start(<<$\r, $\n, Rest/binary>>, Bin, Pos, _RowStart, Row, Rows, crlf) ->
+    Next = Pos + 2,
+    default_field_start(Rest, Bin, Next, Next, [], [lists:reverse(Row, [<<>>]) | Rows], crlf);
+default_field_start(<<_, Rest/binary>>, Bin, Pos, RowStart, Row, Rows, LB) ->
+    default_unquoted(Rest, Bin, Pos, 1, RowStart, Row, Rows, LB);
+default_field_start(<<>>, Bin, _Pos, _RowStart, [], [], _LB) ->
     {nomatch, Bin};
-default_field_start(<<>>, _Bin, _Pos, _RowStart, [], Rows) ->
+default_field_start(<<>>, _Bin, _Pos, _RowStart, [], Rows, _LB) ->
     {ok, lists:reverse(Rows)};
-default_field_start(<<>>, Bin, _Pos, RowStart, _Row, Rows) ->
-    trailer(Bin, RowStart, Rows, ?DEFAULT_DECODER).
+default_field_start(<<>>, Bin, _Pos, RowStart, _Row, Rows, LB) ->
+    trailer(Bin, RowStart, Rows, default_decoder(LB)).
 
 -spec default_unquoted(
-    binary(), binary(), non_neg_integer(), non_neg_integer(), non_neg_integer(), row(), [row()]
+    binary(),
+    binary(),
+    non_neg_integer(),
+    non_neg_integer(),
+    non_neg_integer(),
+    row(),
+    [row()],
+    line_break()
 ) -> decoded().
-default_unquoted(<<$,, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows) ->
+default_unquoted(<<$,, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, LB) ->
     Field = binary_part(Bin, Start, Len),
-    default_field_start(Rest, Bin, Start + Len + 1, RowStart, [Field | Row], Rows);
-default_unquoted(<<$\n, Rest/binary>>, Bin, Start, Len, _RowStart, Row, Rows) ->
+    default_field_start(Rest, Bin, Start + Len + 1, RowStart, [Field | Row], Rows, LB);
+default_unquoted(<<$\n, Rest/binary>>, Bin, Start, Len, _RowStart, Row, Rows, lf) ->
     Next = Start + Len + 1,
     Fields = lists:reverse(Row, [binary_part(Bin, Start, Len)]),
-    default_field_start(Rest, Bin, Next, Next, [], [Fields | Rows]);
-default_unquoted(<<_, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows) ->
-    default_unquoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows);
-default_unquoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows) ->
-    trailer(Bin, RowStart, Rows, ?DEFAULT_DECODER).
+    default_field_start(Rest, Bin, Next, Next, [], [Fields | Rows], lf);
+default_unquoted(<<$\r, $\n, Rest/binary>>, Bin, Start, Len, _RowStart, Row, Rows, crlf) ->
+    Next = Start + Len + 2,
+    Fields = lists:reverse(Row, [binary_part(Bin, Start, Len)]),
+    default_field_start(Rest, Bin, Next, Next, [], [Fields | Rows], crlf);
+default_unquoted(<<_, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, LB) ->
+    default_unquoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows, LB);
+default_unquoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, LB) ->
+    trailer(Bin, RowStart, Rows, default_decoder(LB)).
 
 -spec default_quoted(
     binary(),
@@ -286,14 +303,15 @@ default_unquoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows) ->
     non_neg_integer(),
     row(),
     [row()],
-    escapes()
+    escapes(),
+    line_break()
 ) -> decoded().
-default_quoted(<<$", Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes) ->
-    default_after_quote(Rest, Bin, Start, Len, RowStart, Row, Rows, Escapes);
-default_quoted(<<_, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes) ->
-    default_quoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows, Escapes);
-default_quoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes) ->
-    trailer(Bin, RowStart, Rows, ?DEFAULT_DECODER).
+default_quoted(<<$", Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes, LB) ->
+    default_after_quote(Rest, Bin, Start, Len, RowStart, Row, Rows, Escapes, LB);
+default_quoted(<<_, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes, LB) ->
+    default_quoted(Rest, Bin, Start, Len + 1, RowStart, Row, Rows, Escapes, LB);
+default_quoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes, LB) ->
+    trailer(Bin, RowStart, Rows, default_decoder(LB)).
 
 -spec default_after_quote(
     binary(),
@@ -303,24 +321,35 @@ default_quoted(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes) ->
     non_neg_integer(),
     row(),
     [row()],
-    escapes()
+    escapes(),
+    line_break()
 ) -> decoded().
-default_after_quote(<<$", Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes) ->
+default_after_quote(<<$", Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes, LB) ->
     Escapes1 = [Start + Len + 1 | Escapes],
-    default_quoted(Rest, Bin, Start, Len + 2, RowStart, Row, Rows, Escapes1);
-default_after_quote(<<$,, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes) ->
+    default_quoted(Rest, Bin, Start, Len + 2, RowStart, Row, Rows, Escapes1, LB);
+default_after_quote(<<$,, Rest/binary>>, Bin, Start, Len, RowStart, Row, Rows, Escapes, LB) ->
     Field = quoted_value(Bin, Start, Len, Escapes),
-    default_field_start(Rest, Bin, Start + Len + 2, RowStart, [Field | Row], Rows);
-default_after_quote(<<$\n, Rest/binary>>, Bin, Start, Len, _RowStart, Row, Rows, Escapes) ->
+    default_field_start(Rest, Bin, Start + Len + 2, RowStart, [Field | Row], Rows, LB);
+default_after_quote(<<$\n, Rest/binary>>, Bin, Start, Len, _RowStart, Row, Rows, Escapes, lf) ->
     Next = Start + Len + 2,
     Fields = lists:reverse(Row, [quoted_value(Bin, Start, Len, Escapes)]),
-    default_field_start(Rest, Bin, Next, Next, [], [Fields | Rows]);
-default_after_quote(<<_, _/binary>>, Bin, Start, _Len, RowStart, Row, Rows, _Escapes) ->
+    default_field_start(Rest, Bin, Next, Next, [], [Fields | Rows], lf);
+default_after_quote(
+    <<$\r, $\n, Rest/binary>>, Bin, Start, Len, _RowStart, Row, Rows, Escapes, crlf
+) ->
+    Next = Start + Len + 3,
+    Fields = lists:reverse(Row, [quoted_value(Bin, Start, Len, Escapes)]),
+    default_field_start(Rest, Bin, Next, Next, [], [Fields | Rows], crlf);
+default_after_quote(<<_, _/binary>>, Bin, Start, _Len, RowStart, Row, Rows, _Escapes, LB) ->
     OpeningQuote = Start - 1,
     <<_:OpeningQuote/binary, Rest/binary>> = Bin,
-    default_unquoted(Rest, Bin, OpeningQuote, 0, RowStart, Row, Rows);
-default_after_quote(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes) ->
-    trailer(Bin, RowStart, Rows, ?DEFAULT_DECODER).
+    default_unquoted(Rest, Bin, OpeningQuote, 0, RowStart, Row, Rows, LB);
+default_after_quote(<<>>, Bin, _Start, _Len, RowStart, _Row, Rows, _Escapes, LB) ->
+    trailer(Bin, RowStart, Rows, default_decoder(LB)).
+
+-spec default_decoder(line_break()) -> csv_decoder().
+default_decoder(lf) -> ?DEFAULT_DECODER($\n, <<>>);
+default_decoder(crlf) -> ?DEFAULT_DECODER($\r, <<"\n">>).
 
 %% Only pay for un-escaping (a copy) when a doubled quote was actually seen;
 %% otherwise the value is the raw slice as-is.

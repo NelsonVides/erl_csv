@@ -316,17 +316,23 @@ decode_split_anywhere(_Config) ->
     ?assertEqual([], lists:sublist(Failures, 3)).
 
 default_options_match_generic(_Config) ->
-    % With the default options, decode/2 uses a tokenizer of its own. Swapping
-    % `,` and `;` in a document and decoding it with `;` as the separator runs
-    % the generic tokenizer on the same document: both must give the same
-    % result, trailers included.
+    % With the default separator and quote, and either line break, decode/2
+    % uses a tokenizer of its own. Swapping `,` and `;` in a document and
+    % decoding it with `;` as the separator runs the generic tokenizer on the
+    % same document: both must give the same result, trailers included.
     _ = rand:seed(exsss, {3, 1, 4}),
+    Documents = [random_document() || _ <- lists:seq(1, 20000)],
     Failures = [
-        #{input => Input, default => Default, generic => Generic}
-     || Input <- [random_document() || _ <- lists:seq(1, 20000)],
-        Default <- [erl_csv:decode(Input)],
+        #{input => Input, delimiter => Delimiter, default => Default, generic => Generic}
+     || Delimiter <- [<<"\n">>, <<"\r\n">>],
+        Input <- Documents,
+        Default <- [erl_csv:decode(Input, #{delimiter => Delimiter})],
         Generic <- [
-            swap_separators(erl_csv:decode(swap_separators(Input), #{separator => <<$;>>}))
+            swap_separators(
+                erl_csv:decode(swap_separators(Input), #{
+                    separator => <<$;>>, delimiter => Delimiter
+                })
+            )
         ],
         Default =/= Generic
     ],
