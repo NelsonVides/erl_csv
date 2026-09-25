@@ -45,7 +45,8 @@ groups() ->
             decode_table,
             stray_quote_is_lossless,
             lone_quote_is_a_trailer,
-            decode_split_anywhere
+            decode_split_anywhere,
+            default_options_match_generic
         ]},
         {encode_edge, [parallel], [
             encode_table
@@ -313,6 +314,48 @@ decode_split_anywhere(_Config) ->
         lists:seq(1, 200)
     ),
     ?assertEqual([], lists:sublist(Failures, 3)).
+
+default_options_match_generic(_Config) ->
+    % With the default options, decode/2 uses a tokenizer of its own. Swapping
+    % `,` and `;` in a document and decoding it with `;` as the separator runs
+    % the generic tokenizer on the same document: both must give the same
+    % result, trailers included.
+    _ = rand:seed(exsss, {3, 1, 4}),
+    Failures = [
+        #{input => Input, default => Default, generic => Generic}
+     || Input <- [random_document() || _ <- lists:seq(1, 20000)],
+        Default <- [erl_csv:decode(Input)],
+        Generic <- [
+            swap_separators(erl_csv:decode(swap_separators(Input), #{separator => <<$;>>}))
+        ],
+        Default =/= Generic
+    ],
+    ?assertEqual([], lists:sublist(Failures, 3)).
+
+random_document() ->
+    Special = <<",;\"\r\n">>,
+    <<
+        <<
+            (case rand:uniform(3) of
+                1 -> binary:at(Special, rand:uniform(byte_size(Special)) - 1);
+                _ -> $a + rand:uniform(20)
+            end)
+        >>
+     || _ <- lists:seq(1, rand:uniform(60) - 1)
+    >>.
+
+swap_separators(Bin) when is_binary(Bin) ->
+    <<<<(swap_separator(C))>> || <<C>> <= Bin>>;
+swap_separators(List) when is_list(List) ->
+    [swap_separators(X) || X <- List];
+swap_separators(Tuple) when is_tuple(Tuple) ->
+    list_to_tuple(swap_separators(tuple_to_list(Tuple)));
+swap_separators(Other) ->
+    Other.
+
+swap_separator($,) -> $;;
+swap_separator($;) -> $,;
+swap_separator(C) -> C.
 
 decode_in_two(Encoded, Cut, Opts) ->
     <<Part1:Cut/binary, Part2/binary>> = Encoded,

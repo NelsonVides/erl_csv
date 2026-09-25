@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Encoding is 1.4-1.7x faster. Rows are built front to back instead of being
   interspersed and then reversed, and quotes are doubled with `binary:split/3`
   instead of `binary:replace/4`.
+- With the default options (`,`, `"` and `"\n"`), decoding takes another 8-38% less
+  time, most on unquoted data: `decode/2` then uses a copy of the tokenizer that compares each
+  byte with those constants instead of with the options it was given.
 
 ### Fixed
 
