@@ -48,6 +48,10 @@ The files use CRLF line endings, so `erl_csv` is called with
 the wrong rows: the last field would keep its quotes and a trailing `"\r"`.
 nimble_csv's `RFC4180` parser and glazer accept both line endings.
 
+The decode benchmark also runs on copies of the three files with LF line endings,
+made when the benchmark starts, for which `erl_csv` is called with its default
+options.
+
 - **Decode:** the CSV binary to a list of rows of binaries.
 - **Encode:** the rows `erl_csv` decodes from each file back to a CSV binary, with
   CRLF line endings for all three libraries. `erl_csv` and nimble_csv return
